@@ -4,11 +4,11 @@ from internetarchive import upload
 from flask import Flask
 from threading import Thread
 
-# --- Render ke liye Chota Web Server (Taaki bot band na ho) ---
+# --- Web Server for Render ---
 app = Flask('')
 @app.route('/')
 def home():
-    return "Bot is Running!"
+    return "Bot is Alive!"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
@@ -27,38 +27,37 @@ def start(message):
 @bot.message_handler(content_types=['video', 'document'])
 def handle_video(message):
     try:
-        msg = bot.reply_to(message, "⏳ Uploading to Archive... Please Wait!")
+        msg = bot.reply_to(message, "⏳ Archive par upload ho raha hai... Thoda sabar rakho!")
         
-        # File download setup
         file_info = bot.get_file(message.video.file_id if message.video else message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        filename = "video.mp4" # Hum filename fix rakhenge taaki link banana asaan ho
+        filename = "video.mp4" 
         with open(filename, 'wb') as f:
             f.write(downloaded_file)
 
         # Archive unique ID
         identifier = f"ia_up_{message.chat.id}_{message.message_id}"
         
-        # Metadata ke sath upload
+        # Upload
         upload(identifier, files=[filename], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
         
-        # Direct Links banana
+        # Direct Links (Simple text without Markdown to avoid errors)
         details_link = f"https://archive.org/details/{identifier}"
         stream_link = f"https://archive.org/download/{identifier}/{filename}"
         
-        caption = (f"✅ **Upload Success!**\n\n"
-                   f"🔗 **Details Page:** {details_link}\n"
-                   f"🎬 **Direct Stream Link:** `{stream_link}`\n\n"
-                   f"Note: Stream link ko chalne mein 5-10 min lag sakte hain jab tak Archive use process na karle.")
+        caption = (f"✅ Upload Success!\n\n"
+                   f"🔗 Details Page: {details_link}\n\n"
+                   f"🎬 Direct Stream Link: {stream_link}\n\n"
+                   f"Note: Stream link 5-10 min baad chalega jab Archive process kar lega.")
         
-        bot.edit_message_text(caption, chat_id=msg.chat.id, message_id=msg.message_id, parse_mode="Markdown")
+        # Yahan se parse_mode hata diya hai error fix karne ke liye
+        bot.edit_message_text(caption, chat_id=msg.chat.id, message_id=msg.message_id)
         
-        os.remove(filename) # Phone ki memory khali
+        os.remove(filename)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-# --- Bot aur Server ko sath chalana ---
 if __name__ == "__main__":
     t = Thread(target=run)
     t.start()
