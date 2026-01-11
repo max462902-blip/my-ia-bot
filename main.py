@@ -1,3 +1,11 @@
+# File ke sabse upar imports mein ye add kar:
+import random 
+
+# ... baaki code ...
+
+# Jahan identifier wali line thi, wahan ye likh:
+identifier = f"ia_up_{message.chat.id}_{random.randint(1000, 99999)}"
+
 from keep_alive import keep_alive
 keep_alive()
 
@@ -40,7 +48,7 @@ def handle_video(message):
             f.write(downloaded_file)
 
         # Archive unique ID
-        identifier = f"ia_up_{message.chat.id}_{message.message_id}"
+        
         
         # Upload
         upload(identifier, files=[filename], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
