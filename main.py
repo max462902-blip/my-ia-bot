@@ -1,16 +1,9 @@
-# File ke sabse upar imports mein ye add kar:
-import random 
-
-# ... baaki code ...
-
-# Jahan identifier wali line thi, wahan ye likh:
-identifier = f"ia_up_{message.chat.id}_{random.randint(1000, 99999)}"
-
 from keep_alive import keep_alive
 keep_alive()
 
 import os
 import telebot
+import random  # Ye zaroori hai random number ke liye
 from internetarchive import upload
 from flask import Flask
 from threading import Thread
@@ -40,6 +33,7 @@ def handle_video(message):
     try:
         msg = bot.reply_to(message, "⏳ Archive par upload ho raha hai... Thoda sabar rakho!")
         
+        # File Download
         file_info = bot.get_file(message.video.file_id if message.video else message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
@@ -47,13 +41,16 @@ def handle_video(message):
         with open(filename, 'wb') as f:
             f.write(downloaded_file)
 
-        # Archive unique ID
-        
+        # --- YAHAN HAI FIX (Identifier ko Random banana) ---
+        # Har baar naya number generate hoga (1000 se 99999 ke beech)
+        # Isse 'Global Limit' aur 'Resume' wala error nahi aayega
+        unique_id = random.randint(1000, 99999)
+        identifier = f"ia_up_{message.chat.id}_{unique_id}"
         
         # Upload
         upload(identifier, files=[filename], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
         
-        # Direct Links (Simple text without Markdown to avoid errors)
+        # Direct Links
         details_link = f"https://archive.org/details/{identifier}"
         stream_link = f"https://archive.org/download/{identifier}/{filename}"
         
@@ -62,7 +59,6 @@ def handle_video(message):
                    f"🎬 Direct Stream Link: {stream_link}\n\n"
                    f"Note: Stream link 5-10 min baad chalega jab Archive process kar lega.")
         
-        # Yahan se parse_mode hata diya hai error fix karne ke liye
         bot.edit_message_text(caption, chat_id=msg.chat.id, message_id=msg.message_id)
         
         os.remove(filename)
