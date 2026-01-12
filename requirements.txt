@@ -1,3 +1,5 @@
-pyTelegramBotAPI
-internetarchive
+pyrogram
+tgcrypto
 flask
+internetarchive
+requests
