@@ -52,16 +52,18 @@ async def handle_video(client, message):
         upload(identifier, files=[file_path], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
         
         # Links
+        # Links
         filename = file_path.split("/")[-1]
         details_link = f"https://archive.org/details/{identifier}"
         stream_link = f"https://archive.org/download/{identifier}/{filename}"
         
+        # Yahan change kiya hai (Markdown hata diya)
         caption = (f"✅ **Upload Success!**\n\n"
-                   f"🔗 [Details Page]({details_link})\n"
-                   f"🎬 [Direct Stream Link]({stream_link})\n\n"
+                   f"🔗 Details Page:\n{details_link}\n\n"
+                   f"🎬 Direct Stream Link:\n{stream_link}\n\n"
                    f"__Note: Link 5-10 min baad chalega.__")
         
-        await status_msg.edit_text(caption, disable_web_page_preview=True)
+        await status_msg.edit_text(caption) # disable_web_page_preview hata diya
         
         # File delete server se
         if os.path.exists(file_path):
