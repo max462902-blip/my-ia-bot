@@ -3,3 +3,4 @@ tgcrypto
 flask
 internetarchive
 requests
+yt-dlp
