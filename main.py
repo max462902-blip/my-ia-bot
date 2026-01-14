@@ -130,38 +130,4 @@ if __name__ == "__main__":
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
     keep_alive()
-    app_bot.run()        
-        filename = os.path.basename(file_path)
-        details_link = f"https://archive.org/details/{identifier}"
-        stream_link = f"https://archive.org/download/{identifier}/{filename}"
-        
-        await status_msg.edit_text(f"✅ **Success!**\n\n🔗 Details: {details_link}\n🎬 Direct: {stream_link}")
-        if os.path.exists(file_path): os.remove(file_path)
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Upload Error: {str(e)}")
-
-if __name__ == "__main__":
-    if not os.path.exists("downloads"): os.makedirs("downloads")
-    keep_alive()
-    app_bot.run()        
-        filename = os.path.basename(file_path)
-        details_link = f"https://archive.org/details/{identifier}"
-        stream_link = f"https://archive.org/download/{identifier}/{filename}"
-        
-        caption = (f"✅ **Upload Success!**\n\n"
-                   f"🔗 Details Page:\n{details_link}\n\n"
-                   f"🎬 Direct Stream Link:\n{stream_link}")
-        
-        await status_msg.edit_text(caption)
-        
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Upload Error: {str(e)}")
-
-if __name__ == "__main__":
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
-    keep_alive()
     app_bot.run()
