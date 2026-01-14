@@ -32,7 +32,7 @@ app_bot = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN
 
 @app_bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Bhai! Badi video bhejo (2GB tak), main Archive par daal dunga.")
+    await message.reply_text("Bhai! Badi video bhejo, main Archive par daal dunga.")
 
 @app_bot.on_message(filters.video | filters.document)
 async def handle_video(client, message):
