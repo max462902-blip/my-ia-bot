@@ -25,9 +25,7 @@ def keep_alive():
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# Aapki User ID ka session string (Isse restricted video download hogi)
 SESSION_STRING = os.environ.get("SESSION_STRING")
-
 IA_ACCESS = os.environ.get("IA_ACCESS")
 IA_SECRET = os.environ.get("IA_SECRET")
 
@@ -45,42 +43,46 @@ def download_youtube_video(url):
     try:
         response = requests.post(api_url, headers=headers, json=payload)
         video_direct_link = response.json().get("url")
-        if not video_direct_link: return None
+        if not video_direct_link:
+            return None
         
         file_path = f"downloads/yt_{random.randint(100, 999)}.mp4"
+        if not os.path.exists("downloads"):
+            os.makedirs("downloads")
+            
         r = requests.get(video_direct_link, stream=True)
         with open(file_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=1024*1024):
-                if chunk: f.write(chunk)
+                if chunk:
+                    f.write(chunk)
         return file_path
-    except: return None
+    except:
+        return None
 
 @app_bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("Bhai! YouTube Link bhejo, File bhejo ya Restricted Group ka Link bhejo. Main sab handle kar lunga!")
+    await message.reply_text("Bhai! Link bhejo, main Archive par upload kar dunga.")
 
-# 1. Restricted Telegram Link Handler (Private Group Link)
+# 1. Restricted Telegram Link Handler
 @app_bot.on_message(filters.text & filters.regex(r"https://t.me/c/(\d+)/(\d+)"))
 async def handle_restricted_link(client, message):
     try:
-        status_msg = await message.reply_text("📥 Restricted Link mila! Mere 'Userbot' se download kar raha hoon...")
+        status_msg = await message.reply_text("📥 Restricted Link mila! Download ho raha hai...")
         
-        # Link se Chat ID aur Message ID nikalna
         match = re.search(r"https://t.me/c/(\d+)/(\d+)", message.text)
-        chat_id = int("-100" + match.group(1)) # Private chat ID hamesha -100 se shuru hoti hai
+        chat_id = int("-100" + match.group(1))
         msg_id = int(match.group(2))
 
-        # Userbot ka use karke download karna (Kyunki aap member ho)
         async with app_user:
-            file_path = await app_user.download_media(message=await app_user.get_messages(chat_id, msg_id))
+            msg = await app_user.get_messages(chat_id, msg_id)
+            file_path = await app_user.download_media(message=msg)
 
         if file_path:
             await process_to_archive(status_msg, file_path, message.chat.id)
         else:
-            await status_msg.edit_text("❌ Download fail ho gaya. Shayad message delete ho gaya hai.")
-
+            await status_msg.edit_text("❌ Download fail ho gaya.")
     except Exception as e:
-        await message.reply_text(f"❌ Userbot Error: {str(e)}\n\n(Dhyan dein: SESSION_STRING sahi hona chahiye)")
+        await message.reply_text(f"❌ Userbot Error: {str(e)}")
 
 # 2. YouTube Link Handler
 @app_bot.on_message(filters.text & filters.regex(r"(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+"))
@@ -99,15 +101,36 @@ async def handle_video_file(client, message):
     file_path = await message.download()
     await process_to_archive(status_msg, file_path, message.chat.id)
 
-# Common Upload Logic
+# Common Upload Function
 async def process_to_archive(status_msg, file_path, chat_id):
     try:
         await status_msg.edit_text("⬆️ Uploading to Archive...")
         unique_id = random.randint(1000, 99999)
         identifier = f"ia_up_{chat_id}_{unique_id}"
         
+        # Archive Upload
         upload(identifier, files=[file_path], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
         
+        filename = os.path.basename(file_path)
+        details_link = f"https://archive.org/details/{identifier}"
+        stream_link = f"https://archive.org/download/{identifier}/{filename}"
+        
+        caption = (f"✅ **Upload Success!**\n\n"
+                   f"🔗 Details: {details_link}\n"
+                   f"🎬 Direct: {stream_link}")
+        
+        await status_msg.edit_text(caption)
+        
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Upload Error: {str(e)}")
+
+if __name__ == "__main__":
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+    keep_alive()
+    app_bot.run()        
         filename = os.path.basename(file_path)
         details_link = f"https://archive.org/details/{identifier}"
         stream_link = f"https://archive.org/download/{identifier}/{filename}"
