@@ -1,109 +1,81 @@
-from flask import Flask
-from threading import Thread
 import os
-import random
+import time
 from pyrogram import Client, filters
-from internetarchive import upload
+from github import Github
 
-# --- Web Server (Bot ko zinda rakhne ke liye) ---
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is Alive!"
-
-def run():
-    app.run(host="0.0.0.0", port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-# --- Bot Setup (Pyrogram) ---
-# Render Environment se variables lega
-API_ID = int(os.environ.get("API_ID"))
+# --- Configuration ---
+API_ID = os.environ.get("API_ID")
 API_HASH = os.environ.get("API_HASH")
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-IA_ACCESS = os.environ.get("IA_ACCESS")
-IA_SECRET = os.environ.get("IA_SECRET")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO") 
 
-# Client Start
-app_bot = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+git = Github(GITHUB_TOKEN)
 
-@app_bot.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text("Bhai! Badi video bhejo, main Archive par daal dunga.")
+@app.on_message(filters.document | filters.video)
+async def handle_files(client, message):
+    status_msg = await message.reply_text("📥 Downloading to Server...")
 
-@app_bot.on_message(filters.video | filters.document)
-async def handle_video(client, message):
     try:
-        status_msg = await message.reply_text("⬇️ Downloading... (Ye badi file hai, time lagega)")
-        
-        # Pyrogram se badi file download ho jayegi
+        # 1. Download
         file_path = await message.download()
+        file_name = os.path.basename(file_path)
         
-        await status_msg.edit_text("⬆️ Uploading to Archive... (Sabar rakho)")
+        # Unique Name logic
+        unique_name = f"{int(time.time())}_{file_name}"
 
-        # Random Identifier taaki error na aaye
-        unique_id = random.randint(1000, 99999)
-        identifier = f"ia_up_{message.chat.id}_{unique_id}"
+        # 2. Upload to GitHub
+        await status_msg.edit("☁️ Uploading to GitHub...")
+        repo = git.get_repo(GITHUB_REPO_NAME)
         
-        # Upload to Archive
-        upload(identifier, files=[file_path], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
-        
-        # Links
-        # Links
-        filename = file_path.split("/")[-1]
-        details_link = f"https://archive.org/details/{identifier}"
-        stream_link = f"https://archive.org/download/{identifier}/{filename}"
-        
-        # Yahan change kiya hai (Markdown hata diya)
-        caption = (f"✅ **Upload Success!**\n\n"
-                   f"🔗 Details Page:\n{details_link}\n\n"
-                   f"🎬 Direct Stream Link:\n{stream_link}\n\n"
-                   f"__Note: Link 5-10 min baad chalega.__")
-        
-        await status_msg.edit_text(caption) # disable_web_page_preview hata diya
-        
-        # File delete server se
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        with open(file_path, "rb") as f:
+            content = f.read()
             
+        repo.create_file(unique_name, f"Upload {unique_name}", content)
+
+        # --- MAIN LOGIC FOR LINKS ---
+        
+        # GitHub ka Raw Link (Base Link)
+        raw_github_link = f"https://raw.githubusercontent.com/{GITHUB_REPO_NAME}/main/{unique_name}"
+        raw_github_link = raw_github_link.replace(" ", "%20") # Space fix
+
+        # JsDelivr Link (Fast Loading & Streaming ke liye)
+        # Format: https://cdn.jsdelivr.net/gh/USER/REPO/FILE
+        cdn_link = f"https://cdn.jsdelivr.net/gh/{GITHUB_REPO_NAME}/{unique_name}"
+        cdn_link = cdn_link.replace(" ", "%20")
+
+        final_link_to_give = ""
+        
+        # Agar PDF hai -> Google Docs Viewer Link banao
+        if file_name.lower().endswith(".pdf"):
+            # Google Viewer magic link
+            final_link_to_give = f"https://docs.google.com/viewer?url={raw_github_link}&embedded=true"
+            display_text = "📄 **View PDF Online (No Download)**"
+            
+        # Agar Video hai -> JsDelivr Link do (Taaki stream ho sake)
+        elif file_name.lower().endswith((".mp4", ".mkv", ".mov")):
+            final_link_to_give = cdn_link
+            display_text = "🎥 **Watch Video (Stream)**"
+            
+        # Baki files ke liye -> Normal Raw Link
+        else:
+            final_link_to_give = raw_github_link
+            display_text = "🔗 **File Link**"
+
+        # 3. User ko Link bhejo
+        await status_msg.edit(
+            f"✅ **Upload Complete!**\n\n"
+            f"{display_text}\n"
+            f"{final_link_to_give}\n\n"
+            f"_(Copy karke App me use karein, ye download nahi karega)_"
+        )
+
     except Exception as e:
-        await message.reply_text(f"❌ Error: {str(e)}")
-
-# Bot Run
-if __name__ == "__main__":
-    keep_alive()
-    app_bot.run()
-@app_bot.on_message(filters.video | filters.document)
-async def handle_video_file(client, message):
-    status_msg = await message.reply_text("⬇️ File download ho rahi hai...")
-    file_path = await message.download()
-    await process_to_archive(status_msg, file_path, message.chat.id)
-
-# Common Upload Function
-async def process_to_archive(status_msg, file_path, chat_id):
-    try:
-        await status_msg.edit_text("⬆️ Uploading to Archive...")
-        unique_id = random.randint(1000, 99999)
-        identifier = f"ia_up_{chat_id}_{unique_id}"
+        await status_msg.edit(f"❌ Error: {e}")
         
-        upload(identifier, files=[file_path], access_key=IA_ACCESS, secret_key=IA_SECRET, metadata={"mediatype": "movies"})
-        
-        filename = os.path.basename(file_path)
-        details_link = f"https://archive.org/details/{identifier}"
-        stream_link = f"https://archive.org/download/{identifier}/{filename}"
-        
-        await status_msg.edit_text(f"✅ **Success!**\n\n🔗 Details: {details_link}\n🎬 Direct: {stream_link}")
-        
+    finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-    except Exception as e:
-        await status_msg.edit_text(f"❌ Upload Error: {str(e)}")
 
-if __name__ == "__main__":
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
-    keep_alive()
-    app_bot.run()
+app.run()
