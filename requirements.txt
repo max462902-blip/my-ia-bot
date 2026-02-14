@@ -1,7 +1,0 @@
-pyrogram
-PyGithub
-tgcrypto
-flask
-internetarchive
-requests
-yt-dlp
