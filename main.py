@@ -1,90 +1,74 @@
 import os
 import asyncio
+import requests
 import logging
-import re
-from pyrogram import Client, filters, idle
-from aiohttp import web
+from pyrogram import Client, filters
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 API_ID = int(os.environ.get("APP_ID", "3598514"))
 API_HASH = os.environ.get("API_HASH", "6a0df17414daf6935f1f0a71b8af1ee0")
-BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003800002652"))
-PORT = int(os.environ.get("PORT", "10000"))
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "") # नया टोकन यहाँ डालें
 
-bot = Client("streaming_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("pixeldrain_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- STREAMING ENGINE (Range Support) ---
-async def file_stream_handler(request):
+# एक बार में सिर्फ 1 फाइल (ताकि 500MB में क्रैश न हो)
+upload_semaphore = asyncio.Semaphore(1)
+
+# --- PIXELDRAIN ENGINE ---
+def upload_to_pixeldrain(file_path):
     try:
-        file_id = request.match_info.get("id")
-        msg = await bot.get_messages(CHANNEL_ID, int(file_id))
+        with open(file_path, 'rb') as f:
+            response = requests.post(
+                "https://pixeldrain.com/api/file/",
+                files={"file": f}
+            )
         
-        if not msg or (not msg.video and not msg.document):
-            return web.Response(text="File not found!", status=404)
-        
-        file = msg.video or msg.document
-        file_size = file.file_size
-        range_header = request.headers.get("Range")
-
-        # Range Logic for Players
-        start = 0
-        end = file_size - 1
-        if range_header:
-            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            if match:
-                start = int(match.group(1))
-                if match.group(2):
-                    end = int(match.group(2))
-
-        calc_length = (end - start) + 1
-
-        headers = {
-            "Content-Type": file.mime_type or "video/mp4",
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Content-Length": str(calc_length),
-            "Accept-Ranges": "bytes",
-        }
-
-        response = web.StreamResponse(status=206 if range_header else 200, headers=headers)
-        await response.prepare(request)
-
-        # Telegram से सीधा डेटा स्ट्रीम करना
-        async for chunk in bot.iter_download(file.file_id, offset=start):
-            await response.write(chunk)
-            
-        return response
+        if response.status_code == 201:
+            file_id = response.json()["id"]
+            # ऐप के लिए स्पेशल डायरेक्ट लिंक ट्रिक
+            return f"https://pixeldrain.com/api/file/{file_id}?filename=course_video.mp4"
+        return None
     except Exception as e:
-        return web.Response(text=str(e), status=500)
+        logger.error(f"Error: {e}")
+        return None
 
-async def home_handler(request):
-    return web.Response(text="✅ Video Streaming Engine is Live!", content_type="text/html")
-
-# --- COMMANDS ---
+# --- BOT HANDLERS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    await m.reply_text("नमस्ते! मुझे वीडियो भेजें, मैं **Direct Link** दूँगा।")
+    await m.reply_text("नमस्ते! वीडियो भेजें, मैं **App-Compatible Direct MP4 Link** दूँगा।")
 
 @bot.on_message((filters.video | filters.document) & filters.private)
-async def get_link(c, m):
-    log_msg = await m.copy(CHANNEL_ID)
-    base_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip('/')
-    stream_link = f"{base_url}/file/{log_msg.id}"
-    await m.reply_text(f"✅ **Link Ready:**\n\n`{stream_link}`")
+async def handle_upload(c, m):
+    async with upload_semaphore:
+        status_msg = await m.reply_text("📥 टेलीग्राम से डाउनलोड हो रहा है...", quote=True)
+        file_path = None
+        
+        try:
+            file_path = await m.download()
+            
+            await status_msg.edit_text("🚀 Pixeldrain पर अपलोड हो रहा है...")
+            direct_link = upload_to_pixeldrain(file_path)
+            
+            if direct_link:
+                await status_msg.edit_text(
+                    f"✅ **Direct Link Ready!**\n\n"
+                    f"🔗 `{direct_link}`\n\n"
+                    f"इसे कॉपी करके एडमिन पैनल में लगायें। यह ऐप में सीधा चलेगा।"
+                )
+            else:
+                await status_msg.edit_text("❌ अपलोड फेल हो गया।")
 
-# --- RUNNER ---
-async def start_services():
-    app = web.Application()
-    app.router.add_get("/", home_handler)
-    app.router.add_get("/file/{id}", file_stream_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    await bot.start()
-    await idle()
+        except Exception as e:
+            await status_msg.edit_text(f"❌ एरर: {e}")
+        
+        finally:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path) # फाइल डिलीट ताकि स्टोरेज न भरे
 
+# --- RUN ---
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(start_services())
+    bot.run()
