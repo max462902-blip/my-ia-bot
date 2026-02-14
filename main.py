@@ -15,64 +15,82 @@ API_HASH = os.environ.get("API_HASH", "6a0df17414daf6935f1f0a71b8af1ee0")
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", "10000"))
 
-bot = Client("pixeldrain_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("uploader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 upload_semaphore = asyncio.Semaphore(1)
 
-# --- WEB SERVER (Render Health Check) ---
-async def home_handler(request):
-    return web.Response(text="✅ Uploader Bot is Running!", content_type="text/html")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", home_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logger.info(f"Web server started on port {PORT}")
-
-# --- PIXELDRAIN ENGINE ---
-def upload_to_pixeldrain(file_path):
+# --- UPLOAD TO PIXELDRAIN ---
+def upload_pixeldrain(file_path):
     try:
-        with open(file_path, 'rb') as f:
-            response = requests.post("https://pixeldrain.com/api/file/", files={"file": f})
-        if response.status_code == 201:
-            file_id = response.json()["id"]
+        url = "https://pixeldrain.com/api/file"
+        with open(file_path, "rb") as f:
+            res = requests.post(url, files={"file": f})
+        
+        # Pixeldrain 200 या 201 दोनों भेज सकता है
+        if res.status_code in [200, 201]:
+            data = res.json()
+            file_id = data.get("id")
             return f"https://pixeldrain.com/api/file/{file_id}?filename=video.mp4"
-        return None
     except Exception as e:
-        logger.error(f"Upload Error: {e}")
-        return None
+        logger.error(f"Pixeldrain Error: {e}")
+    return None
+
+# --- UPLOAD TO CATBOX (Backup) ---
+def upload_catbox(file_path):
+    try:
+        url = "https://catbox.moe/user/api.php"
+        data = {"reqtype": "fileupload", "userhash": ""}
+        with open(file_path, "rb") as f:
+            res = requests.post(url, data=data, files={"fileToUpload": f})
+        if res.status_code == 200:
+            return res.text.strip() # यह सीधा .mp4 लिंक देता है
+    except Exception as e:
+        logger.error(f"Catbox Error: {e}")
+    return None
+
+# --- WEB SERVER ---
+async def home(request):
+    return web.Response(text="✅ Bot is Running!")
 
 # --- BOT HANDLERS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    await m.reply_text("👋 नमस्ते! वीडियो भेजें, मैं Pixeldrain पर अपलोड करके Direct MP4 लिंक दूँगा।")
+    await m.reply_text("👋 नमस्ते! वीडियो या फाइल भेजें, मैं आपको **Direct MP4 Link** दूँगा।")
 
 @bot.on_message((filters.video | filters.document) & filters.private)
 async def handle_upload(c, m):
     async with upload_semaphore:
-        status_msg = await m.reply_text("📥 डाउनलोड हो रहा है...", quote=True)
+        status = await m.reply_text("⏳ फाइल डाउनलोड हो रही है...", quote=True)
         file_path = None
         try:
             file_path = await m.download()
-            await status_msg.edit_text("🚀 Pixeldrain पर अपलोड हो रहा है...")
-            direct_link = upload_to_pixeldrain(file_path)
-            if direct_link:
-                await status_msg.edit_text(f"✅ **Upload Success!**\n\n🔗 `{direct_link}`\n\nइसे एडमिन पैनल में लगायें।")
+            await status.edit_text("🚀 सर्वर पर अपलोड हो रहा है...")
+            
+            # पहले Pixeldrain ट्राई करें
+            link = upload_pixeldrain(file_path)
+            
+            # अगर Pixeldrain फेल हो, तो Catbox ट्राई करें
+            if not link:
+                await status.edit_text("🔄 Pixeldrain फेल हुआ, Backup सर्वर पर भेज रहा हूँ...")
+                link = upload_catbox(file_path)
+            
+            if link:
+                await status.edit_text(f"✅ **Link Ready!**\n\n🔗 `{link}`\n\nइसे एडमिन पैनल में लगायें।")
             else:
-                await status_msg.edit_text("❌ अपलोड फेल हो गया।")
+                await status.edit_text("❌ दोनों सर्वर फेल हो गए। कृपया रेंडर के Logs चेक करें।")
+                
         except Exception as e:
-            await status_msg.edit_text(f"❌ एरर: {e}")
+            await status.edit_text(f"❌ एरर: {e}")
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
 
-# --- MAIN STARTUP ---
 async def main():
-    await start_web_server()
+    app = web.Application()
+    app.router.add_get("/", home)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
     await bot.start()
-    logger.info("✅ Bot is Live!")
     await idle()
 
 if __name__ == "__main__":
