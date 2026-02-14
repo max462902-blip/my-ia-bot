@@ -10,4 +10,4 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # बॉट को स्टार्ट करने की कमांड
-CMD ["python", "main.py"]
+CMD ["python3", "main.py"]
