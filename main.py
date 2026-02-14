@@ -1,6 +1,6 @@
 import os
 import asyncio
-import requests
+import aiohttp
 import logging
 from pyrogram import Client, filters, idle
 from aiohttp import web
@@ -15,68 +15,72 @@ API_HASH = os.environ.get("API_HASH", "6a0df17414daf6935f1f0a71b8af1ee0")
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", "10000"))
 
-bot = Client("uploader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("multi_uploader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 upload_semaphore = asyncio.Semaphore(1)
 
-# --- UPLOAD TO PIXELDRAIN ---
-def upload_pixeldrain(file_path):
-    try:
-        url = "https://pixeldrain.com/api/file"
-        with open(file_path, "rb") as f:
-            res = requests.post(url, files={"file": f})
-        
-        # Pixeldrain 200 या 201 दोनों भेज सकता है
-        if res.status_code in [200, 201]:
-            data = res.json()
-            file_id = data.get("id")
-            return f"https://pixeldrain.com/api/file/{file_id}?filename=video.mp4"
-    except Exception as e:
-        logger.error(f"Pixeldrain Error: {e}")
-    return None
-
-# --- UPLOAD TO CATBOX (Backup) ---
-def upload_catbox(file_path):
+# --- UPLOAD TO CATBOX (Permanent - Max 200MB) ---
+async def upload_catbox(file_path):
     try:
         url = "https://catbox.moe/user/api.php"
-        data = {"reqtype": "fileupload", "userhash": ""}
-        with open(file_path, "rb") as f:
-            res = requests.post(url, data=data, files={"fileToUpload": f})
-        if res.status_code == 200:
-            return res.text.strip() # यह सीधा .mp4 लिंक देता है
+        async with aiohttp.ClientSession() as session:
+            data = aiohttp.FormData()
+            data.add_field('reqtype', 'fileupload')
+            data.add_field('userhash', '')
+            data.add_field('fileToUpload', open(file_path, 'rb'))
+            async with session.post(url, data=data) as resp:
+                if resp.status == 200:
+                    return await resp.text()
     except Exception as e:
         logger.error(f"Catbox Error: {e}")
     return None
 
+# --- UPLOAD TO PIXELDRAIN (60 Days - Max 10GB) ---
+async def upload_pixeldrain(file_path):
+    try:
+        url = "https://pixeldrain.com/api/file"
+        async with aiohttp.ClientSession() as session:
+            data = aiohttp.FormData()
+            data.add_field('file', open(file_path, 'rb'))
+            async with session.post(url, data=data) as resp:
+                if resp.status in [200, 201]:
+                    res_json = await resp.json()
+                    file_id = res_json.get("id")
+                    return f"https://pixeldrain.com/api/file/{file_id}?filename=video.mp4"
+    except Exception as e:
+        logger.error(f"Pixeldrain Error: {e}")
+    return None
+
 # --- WEB SERVER ---
 async def home(request):
-    return web.Response(text="✅ Bot is Running!")
+    return web.Response(text="✅ Bot is Online and Ready!")
 
 # --- BOT HANDLERS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
-    await m.reply_text("👋 नमस्ते! वीडियो या फाइल भेजें, मैं आपको **Direct MP4 Link** दूँगा।")
+    await m.reply_text("👋 नमस्ते! वीडियो भेजें।\n\n✅ <200MB: Catbox (Permanent)\n✅ >200MB: Pixeldrain (60 Days)")
 
 @bot.on_message((filters.video | filters.document) & filters.private)
 async def handle_upload(c, m):
     async with upload_semaphore:
-        status = await m.reply_text("⏳ फाइल डाउनलोड हो रही है...", quote=True)
+        status = await m.reply_text("📥 रेंडर सर्वर में डाउनलोड हो रहा है...", quote=True)
         file_path = None
         try:
             file_path = await m.download()
-            await status.edit_text("🚀 सर्वर पर अपलोड हो रहा है...")
+            file_size = os.path.getsize(file_path) / (1024 * 1024) # Size in MB
+
+            link = None
+            if file_size < 200:
+                await status.edit_text("🚀 Catbox पर अपलोड हो रहा है (Permanent Link)...")
+                link = await upload_catbox(file_path)
             
-            # पहले Pixeldrain ट्राई करें
-            link = upload_pixeldrain(file_path)
-            
-            # अगर Pixeldrain फेल हो, तो Catbox ट्राई करें
-            if not link:
-                await status.edit_text("🔄 Pixeldrain फेल हुआ, Backup सर्वर पर भेज रहा हूँ...")
-                link = upload_catbox(file_path)
-            
+            if not link: # बड़ी फाइल या Catbox फेल होने पर Pixeldrain
+                await status.edit_text("🚀 Pixeldrain पर अपलोड हो रहा है...")
+                link = await upload_pixeldrain(file_path)
+
             if link:
-                await status.edit_text(f"✅ **Link Ready!**\n\n🔗 `{link}`\n\nइसे एडमिन पैनल में लगायें।")
+                await status.edit_text(f"✅ **Upload Success!**\n\n🔗 `{link.strip()}`\n\nइसे एडमिन पैनल में लगायें।")
             else:
-                await status.edit_text("❌ दोनों सर्वर फेल हो गए। कृपया रेंडर के Logs चेक करें।")
+                await status.edit_text("❌ अपलोड फेल हो गया।")
                 
         except Exception as e:
             await status.edit_text(f"❌ एरर: {e}")
