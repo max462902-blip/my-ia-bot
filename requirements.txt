@@ -1,9 +1,2 @@
-# Core dependencies
 pyrogram==2.0.106
 aiohttp==3.9.1
-
-# Optional - for better performance (TgCrypto)
-PyTgCrypto==1.2.3
-
-# If TgCrypto fails on some systems, you can use:
-# (Remove PyTgCrypto if it gives issues)
