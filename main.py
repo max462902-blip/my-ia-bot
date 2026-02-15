@@ -16,61 +16,60 @@ CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003800002652"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 # बॉट सेटअप
-bot = Client("direct_stream_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("my_ia_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- WEB SERVER (For Render Health Check) ---
+# --- WEB SERVER (Render को खुश रखने के लिए) ---
 async def home(request):
-    return web.Response(text="✅ Bot is Online & Listening to Messages!", content_type="text/html")
+    return web.Response(text="✅ Bot is Online & Listening!", content_type="text/html")
 
-# --- BOT HANDLERS ---
-@bot.on_message(filters.command("start") & filters.private)
-async def start_msg(c, m):
-    logger.info(f"User {m.from_user.id} started the bot")
-    await m.reply_text(f"नमस्ते {m.from_user.first_name}!\n\nमुझे वीडियो भेजें, मैं आपको **Direct MP4 Link** दूँगा जो टेलीग्राम से सीधा चलेगा।")
-
-@bot.on_message((filters.video | filters.document) & filters.private)
-async def get_link(c, m):
-    try:
-        # वीडियो को चैनल में फॉरवर्ड/कॉपी करना (सुरक्षा के लिए)
-        log_msg = await m.copy(CHANNEL_ID)
-        
-        # रेंडर का असली यूआरएल
-        base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://your-bot.onrender.com").rstrip('/')
-        
-        # डायरेक्ट स्ट्रीमिंग लिंक (यह रेंडर के ज़रिये टेलीग्राम से डेटा लाएगा)
-        stream_link = f"{base_url}/stream/{log_msg.id}?filename=video.mp4"
-        
-        await m.reply_text(
-            f"✅ **लिंक तैयार है!**\n\n"
-            f"🔗 `{stream_link}`\n\n"
-            f"इसे एडमिन पैनल में लगायें। यह लाइफटाइम चलेगा।"
-        )
-    except Exception as e:
-        await m.reply_text(f"❌ एरर: {e}\nपक्का करें कि बॉट चैनल में एडमिन है।")
-
-# --- STARTUP ENGINE ---
-async def main():
-    # 1. वेब सर्वर सेटअप (रेंडर के लिए)
+async def start_web_server():
     app = web.Application()
     app.router.add_get("/", home)
-    # भविष्य में डायरेक्ट स्ट्रीमिंग के लिए यहाँ हैंडलर बढ़ाया जा सकता है
-    
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
     logger.info(f"Web server started on port {PORT}")
 
-    # 2. बॉट चालू करना
+# --- BOT COMMANDS ---
+@bot.on_message(filters.command("start") & filters.private)
+async def start_msg(c, m):
+    logger.info(f"Start command from {m.from_user.id}")
+    await m.reply_text(f"नमस्ते {m.from_user.first_name}!\n\nमुझे वीडियो भेजें, मैं आपको **Direct MP4 Link** दूँगा।")
+
+@bot.on_message((filters.video | filters.document) & filters.private)
+async def handle_forward(c, m):
+    try:
+        # वीडियो चैनल में कॉपी करें
+        log_msg = await m.copy(CHANNEL_ID)
+        base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://your-bot.onrender.com").rstrip('/')
+        
+        # डायरेक्ट स्ट्रीम लिंक
+        stream_link = f"{base_url}/file/{log_msg.id}?filename=video.mp4"
+        
+        await m.reply_text(f"✅ **लिंक तैयार है!**\n\n🔗 `{stream_link}`")
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        await m.reply_text("❌ एरर: बॉट चैनल में Admin नहीं है।")
+
+# --- MAIN RUNNER (The Fix) ---
+async def main():
+    # 1. पहले वेब सर्वर शुरू करें
+    await start_web_server()
+    
+    # 2. फिर बॉट शुरू करें
     await bot.start()
     logger.info("✅ BOT STARTED SUCCESSFULLY!")
     
-    # 3. बॉट को एक्टिव रखना
+    # 3. बॉट को रिप्लाई सुनने के लिए 'idle' रखें
     await idle()
     
-    # 4. बंद होने पर सफाई
+    # 4. सफाई
     await bot.stop()
-    await runner.cleanup()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Event Loop को सही से चलाने के लिए
+    try:
+        asyncio.get_event_loop().run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
