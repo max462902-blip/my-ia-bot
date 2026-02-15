@@ -10,8 +10,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ========== YAHAN APNI VALUES DAALO ==========
-API_ID = 1234567  # 🔴 YAHAN NAYA API_ID DAALO jo my.telegram.org se mila
-API_HASH = "abcdefghijklmnopqrstuvwxyz1234"  # 🔴 YAHAN NAYA API_HASH DAALO
+API_ID = 35985614  # 🔴 YAHAN NAYA API_ID DAALO jo my.telegram.org se mila
+API_HASH = "6a0df17414daf6935f1f0a71b8af1ee9"  # 🔴 YAHAN NAYA API_HASH DAALO
 BOT_TOKEN = "8546752495:AAEOiZypE6VhSvOG7JOd9n4GYpCioUTsNQw"  # Bot token
 CHANNEL_ID = -1003800002652  # Channel ID
 PORT = 10000
