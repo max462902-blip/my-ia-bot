@@ -1,107 +1,76 @@
 import os
 import asyncio
-import aiohttp
 import logging
-import re
 from pyrogram import Client, filters, idle
 from aiohttp import web
 
 # --- LOGGING ---
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- CONFIG ---
+# --- CONFIGURATION ---
 API_ID = int(os.environ.get("APP_ID", "3598514"))
 API_HASH = os.environ.get("API_HASH", "6a0df17414daf6935f1f0a71b8af1ee0")
 BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003800002652"))
 PORT = int(os.environ.get("PORT", "10000"))
 
-bot = Client("cdn_uploader_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-upload_semaphore = asyncio.Semaphore(1) # à¤ à¤• à¤¬à¤¾à¤° à¤®à¥‡à¤‚ à¤¸à¤¿à¤°à¥ à¤« à¤ à¤• à¤…à¤ªà¤²à¥‹à¤¡ (RAM à¤¬à¤šà¤¾à¤¨à¥‡ à¤•à¥‡ à¤²à¤¿à¤¯à¥‡)
+# बॉट सेटअप
+bot = Client("direct_stream_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- UPLOAD TO GOFILE (CDN Speed) ---
-async def upload_gofile(file_path):
-    try:
-        async with aiohttp.ClientSession() as session:
-            # 1. Get Best Server
-            async with session.get("https://api.gofile.io/getServer") as r:
-                res = await r.json()
-                if res["status"] != "ok": return None
-                server = res["data"]["server"]
-
-            # 2. Upload File
-            url = f"https://{server}.gofile.io/uploadFile"
-            data = aiohttp.FormData()
-            data.add_field('file', open(file_path, 'rb'))
-            
-            async with session.post(url, data=data) as resp:
-                res_json = await resp.json()
-                if res_json["status"] == "ok":
-                    # à¤¸à¥€à¤§à¤¾ Download Page link
-                    return res_json["data"]["downloadPage"]
-    except Exception as e:
-        logger.error(f"Gofile Error: {e}")
-    return None
-
-# --- UPLOAD TO PIXELDRAIN (Backup) ---
-async def upload_pixeldrain(file_path):
-    try:
-        url = "https://pixeldrain.com/api/file"
-        async with aiohttp.ClientSession() as session:
-            data = aiohttp.FormData()
-            data.add_field('file', open(file_path, 'rb'))
-            async with session.post(url, data=data) as resp:
-                if resp.status in [200, 201]:
-                    res_json = await resp.json()
-                    return f"https://pixeldrain.com/api/file/{res_json['id']}?filename=video.mp4"
-    except Exception as e:
-        logger.error(f"Pixeldrain Error: {e}")
-    return None
-
-# --- WEB SERVER ---
+# --- WEB SERVER (For Render Health Check) ---
 async def home(request):
-    return web.Response(text="Bot is Live with CDN Support!")
+    return web.Response(text="✅ Bot is Online & Listening to Messages!", content_type="text/html")
 
-# --- HANDLERS ---
+# --- BOT HANDLERS ---
 @bot.on_message(filters.command("start") & filters.private)
-async def start(c, m):
-    await m.reply_text("âœ… बॉट तैयार है! बड़ी फाइल (450MB तक) भेजें, मैं लिंक दूँगा।")
+async def start_msg(c, m):
+    logger.info(f"User {m.from_user.id} started the bot")
+    await m.reply_text(f"नमस्ते {m.from_user.first_name}!\n\nमुझे वीडियो भेजें, मैं आपको **Direct MP4 Link** दूँगा जो टेलीग्राम से सीधा चलेगा।")
 
 @bot.on_message((filters.video | filters.document) & filters.private)
-async def handle_upload(c, m):
-    async with upload_semaphore:
-        status = await m.reply_text("â ³ रेंडर सर्वर पर डाउनलोड हो रहा है...", quote=True)
-        file_path = None
-        try:
-            file_path = await m.download()
-            await status.edit_text("ðŸš€ CDN (Gofile) पर अपलोड हो रहा है...")
-            
-            # Gofile Try (Best for >200MB)
-            link = await upload_gofile(file_path)
-            
-            if not link:
-                await status.edit_text("ðŸ”„ Gofile फेल हुआ, Pixeldrain ट्राई कर रहा हूँ...")
-                link = await upload_pixeldrain(file_path)
-            
-            if link:
-                await status.edit_text(f"âœ… **CDN Link Ready!**\n\nðŸ”— `{link}`")
-            else:
-                await status.edit_text("â Œ दोनों सर्वर फेल हो गए। शायद रेंडर का इंटरनेट बंद हो गया।")
-                
-        except Exception as e:
-            await status.edit_text(f"â Œ एरर: {e}")
-        finally:
-            if file_path and os.path.exists(file_path):
-                os.remove(file_path)
+async def get_link(c, m):
+    try:
+        # वीडियो को चैनल में फॉरवर्ड/कॉपी करना (सुरक्षा के लिए)
+        log_msg = await m.copy(CHANNEL_ID)
+        
+        # रेंडर का असली यूआरएल
+        base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://your-bot.onrender.com").rstrip('/')
+        
+        # डायरेक्ट स्ट्रीमिंग लिंक (यह रेंडर के ज़रिये टेलीग्राम से डेटा लाएगा)
+        stream_link = f"{base_url}/stream/{log_msg.id}?filename=video.mp4"
+        
+        await m.reply_text(
+            f"✅ **लिंक तैयार है!**\n\n"
+            f"🔗 `{stream_link}`\n\n"
+            f"इसे एडमिन पैनल में लगायें। यह लाइफटाइम चलेगा।"
+        )
+    except Exception as e:
+        await m.reply_text(f"❌ एरर: {e}\nपक्का करें कि बॉट चैनल में एडमिन है।")
 
+# --- STARTUP ENGINE ---
 async def main():
+    # 1. वेब सर्वर सेटअप (रेंडर के लिए)
     app = web.Application()
     app.router.add_get("/", home)
+    # भविष्य में डायरेक्ट स्ट्रीमिंग के लिए यहाँ हैंडलर बढ़ाया जा सकता है
+    
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
+
+    # 2. बॉट चालू करना
     await bot.start()
+    logger.info("✅ BOT STARTED SUCCESSFULLY!")
+    
+    # 3. बॉट को एक्टिव रखना
     await idle()
+    
+    # 4. बंद होने पर सफाई
+    await bot.stop()
+    await runner.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main())
