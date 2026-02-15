@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: telegram-stream-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: APP_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+      - key: CHANNEL_ID
+        sync: false
