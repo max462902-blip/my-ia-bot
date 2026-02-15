@@ -19,7 +19,7 @@ PORT = int(os.environ.get("PORT", "10000"))
 # बॉट क्लाइंट
 bot = Client("my_link_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- WEB SERVER WITH MP4 LINKS ---
+# --- SIMPLE DIRECT DOWNLOAD HANDLER ---
 async def home_handler(request):
     return web.Response(
         text="""
@@ -30,144 +30,73 @@ async def home_handler(request):
                 <p>📢 चैनल: @videoslinkmp4</p>
                 <p>🤖 बॉट: @Filelinkgunerterbot</p>
                 <p>🔗 लिंक फॉर्मेट: /file/ID.mp4</p>
+                <p><a href="/file/38.mp4">टेस्ट लिंक</a></p>
             </body>
         </html>
         """,
         content_type="text/html"
     )
 
-async def stream_handler(request):
+async def download_handler(request):
     try:
-        # URL से file_id निकालें (.mp4 हटाकर)
+        # URL se file ID nikalo
         path = request.match_info.get("id", "")
+        file_id = path.replace('.mp4', '')  # .mp4 hatao
         
-        # अगर .mp4 है तो हटाएं, नहीं तो जैसा है वैसे रखें
-        if path.endswith('.mp4'):
-            file_id = path[:-4]  # .mp4 हटाएं
-        else:
-            file_id = path
-            
-        logger.info(f"📥 Stream request for file ID: {file_id}")
+        logger.info(f"📥 Download request for file ID: {file_id}")
         
         if not file_id or not file_id.isdigit():
-            return web.Response(text="Invalid file ID. Use format: /file/123.mp4", status=400)
+            return web.Response(text="Invalid file ID. Use: /file/123.mp4", status=400)
         
-        # चैनल से मैसेज लाएं
+        # Channel se message lao
         try:
-            msg = await asyncio.wait_for(
-                bot.get_messages(CHANNEL_ID, int(file_id)),
-                timeout=10.0
-            )
-        except asyncio.TimeoutError:
-            logger.error("Timeout getting message from Telegram")
-            return web.Response(text="Telegram timeout", status=504)
+            msg = await bot.get_messages(CHANNEL_ID, int(file_id))
         except Exception as e:
             logger.error(f"Failed to get message: {e}")
-            return web.Response(text=f"Message not found: {str(e)}", status=404)
+            return web.Response(text="Message not found", status=404)
         
         if not msg:
             return web.Response(text="Message not found", status=404)
         
-        # मीडिया चेक करें
-        file = None
-        file_name = "video.mp4"
-        file_size = 0
-        
-        if msg.video:
-            file = msg.video
-            file_name = getattr(file, 'file_name', 'video.mp4') or 'video.mp4'
-            if not file_name.endswith('.mp4'):
-                file_name += '.mp4'
-            file_size = file.file_size
-            logger.info(f"🎬 Video found: {file_name}, Size: {file_size}")
-        elif msg.document:
-            file = msg.document
-            file_name = getattr(file, 'file_name', 'document.mp4') or 'document.mp4'
-            if not file_name.endswith(('.mp4', '.mkv', '.avi')):
-                file_name += '.mp4'
-            file_size = file.file_size
-            logger.info(f"📄 Document found: {file_name}, Size: {file_size}")
-        else:
+        # Video check karo
+        if not msg.video and not msg.document:
             return web.Response(text="No video in this message", status=404)
         
-        # Range header handling
-        range_header = request.headers.get("Range")
-        logger.info(f"📊 Range header: {range_header}")
+        # File details
+        file = msg.video or msg.document
+        file_name = getattr(file, 'file_name', 'video.mp4')
+        if not file_name.endswith('.mp4'):
+            file_name = 'video.mp4'
         
-        # Headers सेट करें
+        file_size = file.file_size
+        
+        logger.info(f"🎬 Serving: {file_name} ({file_size} bytes)")
+        
+        # SIMPLE SOLUTION: Force download as attachment
         headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Disposition": f'inline; filename="{file_name}"',
-            "Cache-Control": "public, max-age=3600",
-        }
-        
-        if range_header and file_size > 0:
-            # Parse range header
-            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            if match:
-                start = int(match.group(1))
-                end_str = match.group(2)
-                
-                if start >= file_size:
-                    return web.Response(
-                        status=416,
-                        headers={"Content-Range": f"bytes */{file_size}"},
-                        text="Range Not Satisfiable"
-                    )
-                
-                end = int(end_str) if end_str else file_size - 1
-                end = min(end, file_size - 1)
-                length = end - start + 1
-                
-                logger.info(f"📤 Serving bytes {start}-{end}/{file_size}")
-                
-                headers.update({
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Content-Length": str(length),
-                    "Content-Type": "video/mp4",
-                })
-                
-                response = web.StreamResponse(status=206, headers=headers)
-                await response.prepare(request)
-                
-                # Stream with timeout
-                try:
-                    downloaded = 0
-                    async for chunk in bot.stream_media(msg, offset=start, limit=length):
-                        await asyncio.wait_for(response.write(chunk), timeout=5.0)
-                        downloaded += len(chunk)
-                        if downloaded >= length:
-                            break
-                    logger.info(f"✅ Streamed {downloaded} bytes")
-                except asyncio.TimeoutError:
-                    logger.error("Timeout writing chunk")
-                    return web.Response(text="Stream timeout", status=504)
-                
-                return response
-        
-        # No range header - send entire file
-        logger.info(f"📤 Serving entire file: {file_size} bytes")
-        headers.update({
-            "Content-Length": str(file_size),
             "Content-Type": "video/mp4",
-        })
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+        }
         
         response = web.StreamResponse(status=200, headers=headers)
         await response.prepare(request)
         
-        # Stream with timeout
-        try:
-            async for chunk in bot.stream_media(msg):
-                await asyncio.wait_for(response.write(chunk), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.error("Timeout writing chunk")
-            return web.Response(text="Stream timeout", status=504)
+        # Download from Telegram and send
+        chunk_count = 0
+        async for chunk in bot.stream_media(msg):
+            await response.write(chunk)
+            chunk_count += 1
+            if chunk_count % 10 == 0:  # Har 10 chunks pe log
+                logger.info(f"📤 Sent {chunk_count * 1024 * 1024} bytes...")
         
+        logger.info(f"✅ Download complete: {file_name}")
         return response
         
     except Exception as e:
-        logger.error(f"❌ Streaming Error: {str(e)}", exc_info=True)
-        return web.Response(text=f"Streaming error: {str(e)}", status=500)
+        logger.error(f"❌ Error: {str(e)}", exc_info=True)
+        return web.Response(text=f"Error: {str(e)}", status=500)
 
 # --- BOT COMMANDS ---
 @bot.on_message(filters.command("start") & filters.private)
@@ -175,9 +104,8 @@ async def start_cmd(c, m):
     await m.reply_text(
         f"👋 **नमस्ते {m.from_user.first_name}!**\n\n"
         f"🎥 **वीडियो लिंक जनरेटर बॉट**\n\n"
-        f"मुझे कोई भी वीडियो भेजें, मैं आपको Direct Streaming Link दूंगा।\n\n"
+        f"मुझे कोई भी वीडियो भेजें, मैं Direct Download Link दूंगा।\n\n"
         f"📌 **चैनल:** @videoslinkmp4\n"
-        f"🤖 **बॉट:** @Filelinkgunerterbot\n\n"
         f"🔗 **लिंक फॉर्मेट:** `/file/ID.mp4`\n\n"
         f"**अभी एक वीडियो भेजें!** 🚀"
     )
@@ -188,86 +116,79 @@ async def handle_media(c, m):
     try:
         temp_msg = await m.reply_text("⏳ लिंक बन रहा है...", quote=True)
         
-        # फाइल की जानकारी
-        if m.video:
-            file_name = m.video.file_name or f"video_{m.id}.mp4"
-            file_size = m.video.file_size
-        else:
-            file_name = m.document.file_name or f"document_{m.id}.mp4"
-            file_size = m.document.file_size
-        
-        # चैनल में कॉपी करें
+        # Channel mein copy karo
         channel_msg = await m.copy(CHANNEL_ID)
         logger.info(f"✅ Copied! Message ID: {channel_msg.id}")
         
-        # MP4 लिंक बनाएं
+        # Direct download link
         base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://my-ia-bot-la0g.onrender.com").rstrip('/')
-        stream_link = f"{base_url}/file/{channel_msg.id}.mp4"
+        download_link = f"{base_url}/file/{channel_msg.id}.mp4"
         
-        # साइज फॉर्मेट करें
-        size_str = format_file_size(file_size)
+        # File info
+        if m.video:
+            file_name = m.video.file_name or f"video_{channel_msg.id}.mp4"
+            file_size = m.video.file_size
+        else:
+            file_name = m.document.file_name or f"video_{channel_msg.id}.mp4"
+            file_size = m.document.file_size
+        
+        size_mb = file_size / (1024 * 1024)
         
         await temp_msg.edit_text(
-            f"✅ **आपका लिंक तैयार है!**\n\n"
+            f"✅ **डाउनलोड लिंक तैयार!**\n\n"
             f"📹 **फाइल:** `{file_name}`\n"
-            f"📦 **साइज:** {size_str}\n\n"
-            f"🔗 **वीडियो लिंक (MP4):**\n"
-            f"`{stream_link}`\n\n"
-            f"🌐 **लिंक खोलें:** {stream_link}\n\n"
-            f"💻 **एम्बेड कोड:**\n"
-            f"`<video src='{stream_link}' controls width='100%'></video>`\n\n"
-            f"📱 **लिंक पर क्लिक करें - वीडियो चलेगा!**"
+            f"📦 **साइज:** {size_mb:.2f} MB\n\n"
+            f"🔗 **लिंक (क्लिक करें):**\n"
+            f"`{download_link}`\n\n"
+            f"🌐 **खोलें:** {download_link}\n\n"
+            f"👉 **लिंक पर क्लिक करें - वीडियो डाउनलोड होगा!**"
+        )
+        
+        # Extra link message
+        await m.reply_text(
+            f"🔗 **डाउनलोड लिंक:**\n{download_link}",
+            disable_web_page_preview=True
         )
         
     except Exception as e:
         logger.error(f"❌ Error: {str(e)}", exc_info=True)
-        error_text = f"❌ एरर: {str(e)}"
         if temp_msg:
-            await temp_msg.edit_text(error_text)
-        else:
-            await m.reply_text(error_text)
-
-def format_file_size(size):
-    """फाइल साइज फॉर्मेट करें"""
-    if not size or size <= 0:
-        return "0 B"
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024.0:
-            return f"{size:.2f} {unit}"
-        size /= 1024.0
-    return f"{size:.2f} TB"
+            await temp_msg.edit_text(f"❌ एरर: {str(e)}")
 
 async def main():
     try:
-        # वेब सर्वर शुरू करें
+        # Web server
         app = web.Application()
         app.router.add_get("/", home_handler)
-        app.router.add_get("/file/{id}", stream_handler)  # बिना .mp4 के भी काम करेगा
-        app.router.add_get("/file/{id}.mp4", stream_handler)  # .mp4 के साथ भी
+        app.router.add_get("/file/{id}", download_handler)
+        app.router.add_get("/file/{id}.mp4", download_handler)
         
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", PORT)
         await site.start()
-        logger.info(f"🌐 Web Server started on port {PORT}")
+        logger.info(f"🌐 Server started on port {PORT}")
 
-        # बॉट शुरू करें
+        # Bot start
         await bot.start()
         me = await bot.get_me()
-        logger.info(f"✅ बॉट @{me.username} शुरू हो गया है!")
+        logger.info(f"✅ Bot @{me.username} started!")
         
-        # चैनल चेक करें
+        # Test channel
         try:
             chat = await bot.get_chat(CHANNEL_ID)
-            logger.info(f"📢 चैनल मिला: {chat.title}")
+            logger.info(f"📢 Channel: {chat.title}")
+            
+            # Send test message
+            test = await bot.send_message(CHANNEL_ID, "✅ Bot active!")
+            logger.info(f"✅ Test message ID: {test.id}")
         except Exception as e:
-            logger.error(f"❌ चैनल एक्सेस नहीं हो सका: {e}")
+            logger.error(f"❌ Channel error: {e}")
         
-        logger.info("🚀 बॉट तैयार है!")
         await idle()
         
     except Exception as e:
-        logger.error(f"❌ Main Error: {e}", exc_info=True)
+        logger.error(f"❌ Main Error: {e}")
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
