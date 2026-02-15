@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 API_ID = int(os.environ.get("APP_ID", "3598514"))
 API_HASH = os.environ.get("API_HASH", "6a0df17414daf6935f1f0a71b8af1ee0")
-BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
+BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "8546752495:AAEOiZypE6VhSvOG7JOd9n4GYpCioUTsNQw")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003800002652"))
 PORT = int(os.environ.get("PORT", "10000"))
 BASE_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://my-ia-bot-la0g.onrender.com").rstrip('/')
@@ -79,41 +79,79 @@ async def stream_handler(request):
 
 # --- HOME PAGE ---
 async def home(request):
-    return web.Response(text="✅ Bot is Running! Send video to @Filesheringmp4bot", content_type="text/html")
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Stream Bot</title></head>
+    <body>
+        <h2>✅ Bot is Running!</h2>
+        <p>Send video to @Filesheringmp4bot</p>
+    </body>
+    </html>
+    """
+    return web.Response(text=html, content_type="text/html")
 
-# --- BOT COMMANDS ---
+# --- BOT HANDLERS (YAHAN DEKHO - REPLY SET HAI) ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
-    await message.reply_text("✅ **Bot is Working!**\n\nSend me any video and I'll give you a direct stream link.")
+    await message.reply_text(
+        "👋 **नमस्ते!**\n\n"
+        "मैं एक **Telegram Stream Bot** हूँ।\n\n"
+        "📹 **कैसे use करें:**\n"
+        "• मुझे कोई भी वीडियो भेजें\n"
+        "• मैं Direct Stream Link दूंगा\n"
+        "• Link को browser में खोलें\n\n"
+        "✅ **Bot Active है!**"
+    )
 
 @bot.on_message(filters.command("restart") & filters.private)
 async def restart_command(client, message):
-    await message.reply_text("🔄 Bot is running fine!")
+    await message.reply_text("✅ Bot is running fine!")
+
+@bot.on_message(filters.command("help") & filters.private)
+async def help_command(client, message):
+    await message.reply_text("Send me any video, I'll give you stream link.")
 
 @bot.on_message((filters.video | filters.document) & filters.private)
 async def handle_media(client, message):
     try:
-        status = await message.reply_text("⏳ Processing...")
+        # Processing message
+        status_msg = await message.reply_text("⏳ **Processing...**")
         
         # Forward to channel
         forwarded = await message.copy(CHANNEL_ID)
         
-        # Generate link
+        # Generate stream link
         stream_link = f"{BASE_URL}/stream/{forwarded.id}"
         
-        # Get file name
+        # File info
         if message.video:
             file_name = message.video.file_name or "video.mp4"
+            file_size = message.video.file_size
         else:
             file_name = message.document.file_name or "file.mp4"
+            file_size = message.document.file_size
         
-        await status.delete()
+        # Size format
+        if file_size < 1024 * 1024:
+            size_str = f"{file_size / 1024:.1f} KB"
+        elif file_size < 1024 * 1024 * 1024:
+            size_str = f"{file_size / (1024 * 1024):.1f} MB"
+        else:
+            size_str = f"{file_size / (1024 * 1024 * 1024):.1f} GB"
+        
+        # Delete processing message
+        await status_msg.delete()
+        
+        # Send stream link - YAHAN REPLY AAYEGA
         await message.reply_text(
             f"✅ **Stream Link Generated!**\n\n"
-            f"📁 `{file_name}`\n"
-            f"🔗 `{stream_link}`\n\n"
-            f"Open in browser or VLC Player"
+            f"📁 **File:** `{file_name}`\n"
+            f"📦 **Size:** {size_str}\n"
+            f"🔗 **Link:** `{stream_link}`\n\n"
+            f"⚡ Open in browser or VLC Player"
         )
+        
     except Exception as e:
         await message.reply_text(f"❌ Error: {str(e)}")
 
@@ -137,6 +175,12 @@ async def main():
     me = await bot.get_me()
     logger.info(f"Bot username: @{me.username}")
     logger.info(f"Base URL: {BASE_URL}")
+    
+    # Send message to myself that bot is started
+    try:
+        await bot.send_message(6137966355, "✅ Bot started! Send /start")  # Apna ID daal
+    except:
+        pass
     
     await idle()
     
