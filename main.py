@@ -19,16 +19,34 @@ PORT = int(os.environ.get("PORT", "10000"))
 # बॉट क्लाइंट
 bot = Client("my_link_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- WEB SERVER WITH FIXED STREAMING ---
+# --- WEB SERVER WITH COMPLETE FIXES ---
 async def home_handler(request):
     return web.Response(
         text="""
         <html>
-            <head><title>Video Link Bot</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <h1>✅ बॉट ऑनलाइन है!</h1>
-                <p>यह वीडियो स्ट्रीमिंग सर्वर है।</p>
-                <p>बॉट को टेलीग्राम पर इस्तेमाल करें: @Filelinkgunerterbot</p>
+            <head>
+                <title>Video Link Bot</title>
+                <style>
+                    body { font-family: Arial; text-align: center; padding: 50px; background: #f0f2f5; }
+                    .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 600px; margin: 0 auto; }
+                    h1 { color: #0088cc; }
+                    .status { color: green; font-size: 20px; margin: 20px 0; }
+                    .info { background: #e8f5e9; padding: 15px; border-radius: 5px; margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🎥 Video Link Generator Bot</h1>
+                    <div class="status">✅ बॉट ऑनलाइन है!</div>
+                    <div class="info">
+                        <p>📢 चैनल: @videoslinkmp4</p>
+                        <p>🤖 बॉट: @Filelinkgunerterbot</p>
+                        <p>🌐 सर्वर: Render.com</p>
+                    </div>
+                    <p>बॉट को टेलीग्राम पर इस्तेमाल करें और वीडियो भेजें।</p>
+                    <p>आपका लिंक इस फॉर्मेट में होगा:</p>
+                    <code>https://my-ia-bot-la0g.onrender.com/file/मैसेज_ID</code>
+                </div>
             </body>
         </html>
         """,
@@ -38,114 +56,155 @@ async def home_handler(request):
 async def stream_handler(request):
     try:
         file_id = request.match_info.get("id")
-        logger.info(f"Stream request for file ID: {file_id}")
+        logger.info(f"📥 Stream request for file ID: {file_id}")
         
         if not file_id or not file_id.isdigit():
-            return web.Response(text="Invalid file ID", status=400)
+            return web.Response(text="Invalid file ID - ID must be a number", status=400)
         
         # चैनल से मैसेज लाएं
         try:
             msg = await bot.get_messages(CHANNEL_ID, int(file_id))
         except Exception as e:
-            logger.error(f"Failed to get message: {e}")
-            return web.Response(text="Message not found in channel", status=404)
+            logger.error(f"❌ Failed to get message: {e}")
+            return web.Response(text=f"Message not found in channel: {str(e)}", status=404)
         
         if not msg:
             return web.Response(text="Message not found", status=404)
         
-        # मीडिया चेक करें
+        # मीडिया चेक करें - किसी भी प्रकार की मीडिया फाइल को सपोर्ट करें
         file = None
+        file_name = "video.mp4"  # डिफ़ॉल्ट नाम
+        file_size = 0
+        mime_type = "video/mp4"  # डिफ़ॉल्ट MIME type
+        
         if msg.video:
             file = msg.video
-            logger.info(f"Video found: {file.file_name}, Size: {file.file_size}")
+            file_name = getattr(file, 'file_name', None)
+            if not file_name:
+                file_name = f"video_{file_id}.mp4"
+            file_size = file.file_size
+            mime_type = file.mime_type or "video/mp4"
+            logger.info(f"🎬 Video found: {file_name}, Size: {file_size}, MIME: {mime_type}")
+            
         elif msg.document:
             file = msg.document
-            logger.info(f"Document found: {file.file_name}, Size: {file.file_size}")
+            file_name = getattr(file, 'file_name', None)
+            if not file_name:
+                file_name = f"document_{file_id}.bin"
+            file_size = file.file_size
+            mime_type = file.mime_type or "application/octet-stream"
+            logger.info(f"📄 Document found: {file_name}, Size: {file_size}, MIME: {mime_type}")
+            
         elif msg.audio:
             file = msg.audio
-            logger.info(f"Audio found: {file.file_name}, Size: {file.file_size}")
+            file_name = getattr(file, 'file_name', None)
+            if not file_name:
+                file_name = f"audio_{file_id}.mp3"
+            file_size = file.file_size
+            mime_type = file.mime_type or "audio/mpeg"
+            logger.info(f"🎵 Audio found: {file_name}, Size: {file_size}, MIME: {mime_type}")
+            
+        elif msg.photo:
+            # फोटो के लिए अलग हैंडलिंग
+            file = msg.photo
+            file_size = 0  # फोटो का साइज अलग तरीके से निकालना होगा
+            file_name = f"photo_{file_id}.jpg"
+            mime_type = "image/jpeg"
+            logger.info(f"📷 Photo found, Size: {file_size}")
+            
         else:
-            return web.Response(text="No media in this message", status=404)
+            return web.Response(text="No media found in this message", status=404)
         
-        file_size = file.file_size
-        file_name = getattr(file, 'file_name', 'video.mp4')
+        # अगर file_size 0 है तो error return करें
+        if file_size == 0 and not msg.photo:
+            return web.Response(text="Invalid file size", status=500)
+        
+        # Content-Type को और बेहतर बनाएं
+        content_type = mime_type
         
         # Range header handling for streaming
         range_header = request.headers.get("Range")
-        logger.info(f"Range header: {range_header}")
+        logger.info(f"📊 Range header: {range_header}")
         
-        # Content-Type based on file extension
-        content_type = "video/mp4"
-        if file_name.endswith(('.mp3', '.m4a')):
-            content_type = "audio/mpeg"
-        elif file_name.endswith(('.jpg', '.jpeg', '.png')):
-            content_type = "image/jpeg"
-        
-        if range_header:
-            # Parse range header
-            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            if match:
-                start = int(match.group(1))
-                end = match.group(2)
-                end = int(end) if end else file_size - 1
-                
-                # Validate range
-                start = max(0, min(start, file_size - 1))
-                end = max(start, min(end, file_size - 1))
-                length = end - start + 1
-                
-                logger.info(f"Serving bytes {start}-{end}/{file_size}")
-                
-                headers = {
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Content-Length": str(length),
-                    "Content-Type": content_type,
-                    "Accept-Ranges": "bytes",
-                    "Content-Disposition": f'inline; filename="{file_name}"',
-                    "Cache-Control": "no-cache",
-                }
-                
-                response = web.StreamResponse(status=206, headers=headers)
-                await response.prepare(request)
-                
-                # Stream the specific chunk
-                downloaded = 0
-                async for chunk in bot.stream_media(msg, offset=start, limit=length):
-                    await response.write(chunk)
-                    downloaded += len(chunk)
-                    if downloaded >= length:
-                        break
-                
-                logger.info(f"Successfully streamed {downloaded} bytes")
-                return response
-        
-        # No range header - send entire file
-        logger.info(f"Serving entire file: {file_size} bytes")
-        headers = {
-            "Content-Length": str(file_size),
-            "Content-Type": content_type,
-            "Accept-Ranges": "bytes",
-            "Content-Disposition": f'inline; filename="{file_name}"',
-        }
-        
-        response = web.StreamResponse(status=200, headers=headers)
-        await response.prepare(request)
-        
-        # Stream entire file
-        async for chunk in bot.stream_media(msg):
-            await response.write(chunk)
-        
-        return response
+        try:
+            if range_header and file_size > 0:
+                # Parse range header
+                match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+                if match:
+                    start = int(match.group(1))
+                    end_str = match.group(2)
+                    
+                    # Validate range
+                    if start >= file_size:
+                        return web.Response(
+                            status=416,
+                            headers={"Content-Range": f"bytes */{file_size}"},
+                            text="Range Not Satisfiable"
+                        )
+                    
+                    end = int(end_str) if end_str else file_size - 1
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+                    
+                    logger.info(f"📤 Serving bytes {start}-{end}/{file_size} (length: {length})")
+                    
+                    headers = {
+                        "Content-Range": f"bytes {start}-{end}/{file_size}",
+                        "Content-Length": str(length),
+                        "Content-Type": content_type,
+                        "Accept-Ranges": "bytes",
+                        "Content-Disposition": f'inline; filename="{file_name}"',
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0",
+                    }
+                    
+                    response = web.StreamResponse(status=206, headers=headers)
+                    await response.prepare(request)
+                    
+                    # Stream the specific chunk
+                    downloaded = 0
+                    async for chunk in bot.stream_media(msg, offset=start, limit=length):
+                        await response.write(chunk)
+                        downloaded += len(chunk)
+                        if downloaded >= length:
+                            break
+                    
+                    logger.info(f"✅ Successfully streamed {downloaded} bytes")
+                    return response
+            
+            # No range header or range parsing failed - send entire file
+            logger.info(f"📤 Serving entire file: {file_size} bytes")
+            headers = {
+                "Content-Length": str(file_size) if file_size > 0 else "0",
+                "Content-Type": content_type,
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'inline; filename="{file_name}"',
+                "Cache-Control": "public, max-age=3600",
+            }
+            
+            response = web.StreamResponse(status=200, headers=headers)
+            await response.prepare(request)
+            
+            # Stream entire file
+            async for chunk in bot.stream_media(msg):
+                await response.write(chunk)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"❌ Streaming chunk error: {str(e)}", exc_info=True)
+            return web.Response(text=f"Streaming error: {str(e)}", status=500)
         
     except Exception as e:
-        logger.error(f"Streaming Error: {str(e)}", exc_info=True)
+        logger.error(f"❌ Streaming Error: {str(e)}", exc_info=True)
         return web.Response(text=f"Streaming error: {str(e)}", status=500)
 
 # --- BOT COMMANDS ---
 @bot.on_message(filters.command("start") & filters.private)
 async def start_cmd(c, m):
     await m.reply_text(
-        f"👋 नमस्ते {m.from_user.first_name}!\n\n"
+        f"👋 **नमस्ते {m.from_user.first_name}!**\n\n"
         f"🎥 **वीडियो लिंक जनरेटर बॉट**\n\n"
         f"मुझे कोई भी वीडियो या फाइल भेजें, मैं आपको Direct Streaming Link दूंगा।\n\n"
         f"📌 **चैनल:** @videoslinkmp4\n"
@@ -153,8 +212,9 @@ async def start_cmd(c, m):
         f"✨ **फीचर्स:**\n"
         f"• डायरेक्ट स्ट्रीमिंग लिंक\n"
         f"• वेबसाइट में एम्बेड कर सकते हैं\n"
-        f"• मोबाइल फ्रेंडली\n\n"
-        f"अभी एक वीडियो भेजकर टेस्ट करें! 🚀"
+        f"• मोबाइल फ्रेंडली\n"
+        f"• सभी फॉर्मेट सपोर्ट (MP4, MKV, AVI, etc.)\n\n"
+        f"**अभी एक वीडियो भेजकर टेस्ट करें!** 🚀"
     )
 
 @bot.on_message(filters.command("channel") & filters.private)
@@ -162,21 +222,36 @@ async def channel_cmd(c, m):
     """चैनल की जानकारी दिखाएं"""
     try:
         chat = await bot.get_chat(CHANNEL_ID)
-        member = await bot.get_chat_member(CHANNEL_ID, "me")
-        admin_status = "✅ हाँ" if member.status in ["administrator", "creator"] else "❌ नहीं"
+        try:
+            member = await bot.get_chat_member(CHANNEL_ID, "me")
+            admin_status = "✅ हाँ" if member.status in ["administrator", "creator"] else "❌ नहीं"
+        except:
+            admin_status = "❌ जांच नहीं हो सकी"
+        
+        # चैनल के आखिरी 5 मैसेज चेक करें
+        try:
+            messages = []
+            async for msg in bot.get_chat_history(CHANNEL_ID, limit=5):
+                if msg.video or msg.document:
+                    messages.append(f"• ID {msg.id}: {'🎬' if msg.video else '📄'}")
+            msg_history = "\n".join(messages) if messages else "कोई मीडिया नहीं"
+        except:
+            msg_history = "हिस्ट्री नहीं देख सकते"
         
         await m.reply_text(
             f"📢 **चैनल जानकारी:**\n\n"
             f"📌 **नाम:** {chat.title}\n"
             f"🆔 **ID:** `{chat.id}`\n"
             f"🔗 **लिंक:** {chat.invite_link or 'https://t.me/videoslinkmp4'}\n"
-            f"👑 **बॉट एडमिन:** {admin_status}\n\n"
-            f"📊 **स्टेटस:** {'✅ कनेक्टेड' if admin_status == '✅ हाँ' else '❌ एडमिन नहीं'}"
+            f"👑 **बॉट एडमिन:** {admin_status}\n"
+            f"📊 **मेम्बर्स:** {getattr(chat, 'members_count', 'अज्ञात')}\n\n"
+            f"📋 **हालिया मीडिया:**\n{msg_history}\n\n"
+            f"🌐 **बेस URL:** https://my-ia-bot-la0g.onrender.com"
         )
     except Exception as e:
         await m.reply_text(f"❌ चैनल कनेक्ट नहीं है: {str(e)}")
 
-@bot.on_message((filters.video | filters.document | filters.audio) & filters.private)
+@bot.on_message((filters.video | filters.document | filters.audio | filters.photo) & filters.private)
 async def handle_media(c, m):
     temp_msg = None
     try:
@@ -184,24 +259,39 @@ async def handle_media(c, m):
         temp_msg = await m.reply_text("⏳ लिंक बन रहा है... कृपया प्रतीक्षा करें", quote=True)
         
         # फाइल की जानकारी लॉग करें
+        media_type = "unknown"
+        file_name = "media.mp4"
+        file_size = 0
+        duration = 0
+        
         if m.video:
-            logger.info(f"Processing video: {m.video.file_name} - {m.video.file_size} bytes")
-            file_name = m.video.file_name or "video.mp4"
+            media_type = "video"
+            file_name = m.video.file_name or f"video_{m.id}.mp4"
             file_size = m.video.file_size
             duration = getattr(m.video, 'duration', 0)
+            logger.info(f"🎬 Processing video: {file_name} - {file_size} bytes")
+            
         elif m.document:
-            logger.info(f"Processing document: {m.document.file_name} - {m.document.file_size} bytes")
-            file_name = m.document.file_name or "document.mp4"
+            media_type = "document"
+            file_name = m.document.file_name or f"document_{m.id}.bin"
             file_size = m.document.file_size
-            duration = 0
-        else:
-            logger.info(f"Processing audio: {m.audio.file_name} - {m.audio.file_size} bytes")
-            file_name = m.audio.file_name or "audio.mp3"
+            logger.info(f"📄 Processing document: {file_name} - {file_size} bytes")
+            
+        elif m.audio:
+            media_type = "audio"
+            file_name = m.audio.file_name or f"audio_{m.id}.mp3"
             file_size = m.audio.file_size
             duration = getattr(m.audio, 'duration', 0)
+            logger.info(f"🎵 Processing audio: {file_name} - {file_size} bytes")
+            
+        elif m.photo:
+            media_type = "photo"
+            file_name = f"photo_{m.id}.jpg"
+            file_size = 0  # फोटो का साइज अलग से निकालना होगा
+            logger.info(f"📷 Processing photo")
         
         # चैनल में मैसेज कॉपी करें
-        logger.info(f"Copying to channel {CHANNEL_ID}")
+        logger.info(f"📤 Copying to channel {CHANNEL_ID}")
         channel_msg = await m.copy(CHANNEL_ID)
         logger.info(f"✅ Copied! Message ID: {channel_msg.id}")
         
@@ -209,57 +299,52 @@ async def handle_media(c, m):
         base_url = os.environ.get("RENDER_EXTERNAL_URL", "https://my-ia-bot-la0g.onrender.com").rstrip('/')
         stream_link = f"{base_url}/file/{channel_msg.id}"
         
-        # डायरेक्ट डाउनलोड लिंक भी बनाएं
-        download_link = f"{stream_link}?download=1"
-        
         # फाइल साइज फॉर्मेट करें
-        size_str = format_file_size(file_size)
+        size_str = format_file_size(file_size) if file_size > 0 else "अज्ञात"
         
         # ड्यूरेशन फॉर्मेट करें
-        duration_str = format_duration(duration) if duration > 0 else "अज्ञात"
+        duration_str = format_duration(duration) if duration > 0 else "N/A"
         
-        # एम्बेड कोड
-        embed_code = f'<video src="{stream_link}" controls width="100%" poster=""></video>'
-        
-        await temp_msg.edit_text(
+        # रिस्पॉन्स मैसेज बनाएं
+        response_text = (
             f"✅ **आपका लिंक तैयार है!**\n\n"
             f"📹 **फाइल:** `{file_name}`\n"
             f"📦 **साइज:** {size_str}\n"
-            f"⏱️ **अवधि:** {duration_str}\n\n"
-            f"🔗 **स्ट्रीमिंग लिंक:**\n"
-            f"`{stream_link}`\n\n"
-            f"📥 **डायरेक्ट डाउनलोड:**\n"
-            f"`{download_link}`\n\n"
-            f"💻 **एम्बेड कोड:**\n"
-            f"`{embed_code}`\n\n"
-            f"🌐 **टेस्ट करें:** {stream_link}\n\n"
-            f"✨ लिंक पर क्लिक करें - वीडियो चलना चाहिए!"
         )
         
-        # लिंक को प्राइवेट तरीके से भी भेजें
+        if duration > 0:
+            response_text += f"⏱️ **अवधि:** {duration_str}\n"
+        
+        response_text += (
+            f"\n🔗 **स्ट्रीमिंग लिंक:**\n"
+            f"`{stream_link}`\n\n"
+            f"🌐 **लिंक खोलें:** {stream_link}\n\n"
+            f"💻 **एम्बेड कोड:**\n"
+            f"`<video src='{stream_link}' controls width='100%'></video>`\n\n"
+            f"📱 **लिंक पर क्लिक करें - वीडियो चलना चाहिए!**"
+        )
+        
+        await temp_msg.edit_text(response_text)
+        
+        # अलग से एक छोटा मैसेज सिर्फ लिंक के साथ
         await m.reply_text(
             f"🔗 **त्वरित लिंक:**\n{stream_link}",
             disable_web_page_preview=True
         )
         
     except Exception as e:
-        logger.error(f"Error in handle_media: {str(e)}", exc_info=True)
-        error_msg = str(e).lower()
+        logger.error(f"❌ Error in handle_media: {str(e)}", exc_info=True)
         
         error_text = "❌ **एरर हुई!**\n\n"
         
-        if "chat not found" in error_msg or "identifier" in error_msg:
+        if "chat not found" in str(e).lower():
             error_text += "🔴 **चैनल ID गलत है!**\n"
             error_text += "कृपया चेक करें:\n"
             error_text += "1. CHANNEL_ID = -1003800002652 सही है?\n"
             error_text += "2. बॉट को चैनल में जोड़ा गया है?"
-        elif "admin" in error_msg or "privileges" in error_msg or "rights" in error_msg:
+        elif "admin" in str(e).lower() or "privileges" in str(e).lower():
             error_text += "🔴 **बॉट एडमिन नहीं है!**\n"
-            error_text += "कृपया @videoslinkmp4 चैनल में जाकर बॉट को एडमिन बनाएं।\n\n"
-            error_text += "एडमिन बनाने के लिए:\n"
-            error_text += "1. चैनल में जाएं\n"
-            error_text += "2. Info → Administrators\n"
-            error_text += "3. Add Admin → @Filelinkgunerterbot"
+            error_text += "कृपया @videoslinkmp4 चैनल में जाकर बॉट को एडमिन बनाएं।"
         else:
             error_text += f"🔴 **टेक्निकल एरर:**\n`{str(e)}`"
         
@@ -270,7 +355,7 @@ async def handle_media(c, m):
 
 def format_file_size(size):
     """फाइल साइज फॉर्मेट करें"""
-    if not size:
+    if not size or size <= 0:
         return "0 B"
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024.0:
@@ -280,7 +365,7 @@ def format_file_size(size):
 
 def format_duration(seconds):
     """ड्यूरेशन फॉर्मेट करें"""
-    if not seconds:
+    if not seconds or seconds <= 0:
         return "0:00"
     hours = seconds // 3600
     minutes = (seconds % 3600) // 60
@@ -321,7 +406,12 @@ async def main():
             try:
                 member = await bot.get_chat_member(CHANNEL_ID, "me")
                 if member.status in ["administrator", "creator"]:
-                    logger.info("✅ बॉट एडमिन है - सब ठीक है!")
+                    logger.info(f"✅ बॉट एडमिन है - सब ठीक है!")
+                    
+                    # एक टेस्ट मैसेज भेजें
+                    test_msg = await bot.send_message(CHANNEL_ID, "✅ बॉट एक्टिव है!")
+                    logger.info(f"✅ Test message sent: {test_msg.id}")
+                    
                 else:
                     logger.warning("⚠️ बॉट एडमिन नहीं है!")
                     logger.warning("कृपया @videoslinkmp4 चैनल में बॉट को एडमिन बनाएं")
@@ -336,7 +426,7 @@ async def main():
         await idle()
         
     except Exception as e:
-        logger.error(f"Main Error: {e}", exc_info=True)
+        logger.error(f"❌ Main Error: {e}", exc_info=True)
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
