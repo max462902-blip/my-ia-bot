@@ -1,143 +1,123 @@
 import os
 import time
-import math
+import uuid
+import threading
+import requests
 import logging
-import asyncio
-from aiohttp import web
-from pyrogram import Client, filters, errors
+import shutil
+from flask import Flask
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from dotenv import load_dotenv
 
+# --- SETUP ---
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
-# --- CONFIGURATION ---
+# --- SERVER KEEPER (Render ko sone nahi dega) ---
+app = Flask(__name__)
+@app.route('/')
+def home(): return "PixelDrain Bot is Running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+
+# --- CONFIG ---
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Yahan apne Private Log Channel ki ID daalo (Bot wahan Admin hona chahiye)
-# Example: LOG_CHANNEL = -1001234567890
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "0")) 
+# Bot Setup
+bot = Client("pd_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=2)
 
-# Render URL (Environment Variable mein add kar dena, ya auto detect hoga)
-# Example: https://my-bot.onrender.com
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
+def get_readable_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size < 1024: return f"{size:.2f} {unit}"
+        size /= 1024
 
-# --- SETUP ---
-logging.basicConfig(level=logging.INFO)
-bot = Client("stream_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
-
-# --- WEB SERVER (STREAMER) ---
-async def stream_handler(request):
+# --- PIXELDRAIN UPLOAD FUNCTION ---
+def upload_to_pixeldrain(file_path, file_name):
+    url = "https://pixeldrain.com/api/file/"
     try:
-        message_id = int(request.match_info['message_id'])
-        file_name = request.match_info['file_name']
+        # File open karke upload karna
+        with open(file_path, 'rb') as f:
+            response = requests.post(
+                url,
+                data=f,
+                auth=('', ''), # Anonymous upload (Account ki zarurat nahi)
+                params={'name': file_name}
+            )
         
-        # Telegram se file maangna
-        msg = await bot.get_messages(LOG_CHANNEL, message_id)
-        media = msg.video or msg.document or msg.audio
-        
-        if not media:
-            return web.Response(status=404, text="File Not Found")
-
-        file_size = media.file_size
-        
-        # Range Header Handle karna (Video seeking ke liye zaroori hai)
-        range_header = request.headers.get('Range')
-        from_bytes, until_bytes = 0, file_size - 1
-        
-        if range_header:
-            from_bytes, until_bytes = 0, file_size - 1
-            s_range = range_header.replace('bytes=', '').split('-')
-            from_bytes = int(s_range[0])
-            if len(s_range) > 1 and s_range[1]:
-                until_bytes = int(s_range[1])
-        
-        length = until_bytes - from_bytes + 1
-        headers = {
-            'Content-Type': media.mime_type or 'application/octet-stream',
-            'Accept-Ranges': 'bytes',
-            'Content-Range': f'bytes {from_bytes}-{until_bytes}/{file_size}',
-            'Content-Length': str(length),
-            'Content-Disposition': f'inline; filename="{file_name}"' 
-        }
-
-        # Response Generator
-        resp = web.StreamResponse(status=206 if range_header else 200, headers=headers)
-        await resp.prepare(request)
-
-        # Telegram se chunks download karke Browser ko bhejna
-        async for chunk in bot.download_media(msg, offset=from_bytes, limit=length, in_memory=True, chunk_size=1024*1024):
-            await resp.write(chunk)
-        
-        return resp
-
+        if response.status_code == 201:
+            data = response.json()
+            file_id = data['id']
+            # Direct link format
+            return f"https://pixeldrain.com/api/file/{file_id}"
+        else:
+            return None
     except Exception as e:
-        print(f"Stream Error: {e}")
-        return web.Response(status=500, text="Internal Server Error")
-
-async def home(request):
-    return web.Response(text="Bot is Live and Streaming!")
+        print(f"Upload Error: {e}")
+        return None
 
 # --- BOT COMMANDS ---
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("👋 **Streamer Bot Ready!**\nFile bhejo, main Direct Link dunga.")
+    await message.reply_text("✅ **Bot Ready!**\nFile bhejo, main PixelDrain ka Direct Link dunga (Fast & Secure).")
 
 @bot.on_message(filters.video | filters.document)
 async def handle_file(client, message):
-    if LOG_CHANNEL == 0:
-        return await message.reply_text("❌ Error: LOG_CHANNEL ID set nahi hai.")
-
-    status = await message.reply_text("🔄 **Processing...**")
-    
     try:
-        # 1. File Name Safai
         media = message.video or message.document
-        original_name = getattr(media, "file_name", f"video_{message.id}.mp4")
+        if not media: return
+
+        # 1. File Name Logic
+        if message.video:
+            original_name = f"video_{uuid.uuid4().hex[:5]}.mp4"
+        else:
+            original_name = media.file_name or f"file_{uuid.uuid4().hex[:5]}.pdf"
+
+        # Safai
         safe_name = original_name.replace(" ", "_").replace("(", "").replace(")", "")
+        file_size = get_readable_size(media.file_size)
+
+        status = await message.reply_text(f"⏳ **Processing...**\n`{safe_name}`")
+
+        # 2. Download Path
+        if not os.path.exists("downloads"): os.makedirs("downloads")
+        local_path = f"downloads/{safe_name}"
+
+        # 3. Download
+        await status.edit("⬇️ **Downloading...**")
+        await message.download(file_name=local_path)
+
+        # 4. Upload to PixelDrain
+        await status.edit("⬆️ **Uploading to PixelDrain...**\n(Ye fast hoga)")
         
-        # 2. File ko Log Channel mein Forward karna (Permanent Storage)
-        log_msg = await message.copy(LOG_CHANNEL)
-        
-        # 3. Link Generate Karna
-        # Link Format: https://your-site.com/watch/MESSAGE_ID/FILE_NAME
-        stream_link = f"{BASE_URL}/watch/{log_msg.id}/{safe_name}"
-        
-        # 4. Reply
-        await status.edit(
-            f"✅ **File Saved Permanently!**\n\n"
-            f"🔗 **Direct Link:**\n`{stream_link}`\n\n"
-            f"⚠️ *Ye link tab tak chalega jab tak Bot Render par ON hai.*",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🌐 Open in Chrome / Play", url=stream_link)]
-            ])
-        )
+        # Thread mein upload taaki bot hang na ho
+        direct_link = await bot.loop.run_in_executor(None, upload_to_pixeldrain, local_path, safe_name)
+
+        if direct_link:
+            # 5. Success Reply
+            if message.video:
+                msg = f"✅ **Video Uploaded!**\n\n🔗 **Direct Link:**\n`{direct_link}`\n\n📦 **Size:** {file_size}"
+                btn = InlineKeyboardButton("🎬 Play Video", url=direct_link)
+            else:
+                msg = f"✅ **PDF Uploaded!**\n\n🔗 **Direct Link:**\n`{direct_link}`\n\n📦 **Size:** {file_size}"
+                btn = InlineKeyboardButton("📄 Open PDF", url=direct_link)
+
+            await status.delete()
+            await message.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
+        else:
+            await status.edit("❌ **Upload Failed!** PixelDrain server issue.")
 
     except Exception as e:
-        await status.edit(f"❌ Error: {e}")
+        await status.edit(f"❌ Error: {str(e)}")
 
-# --- STARTUP ---
-async def start_services():
-    # Web Server Setup
-    app = web.Application()
-    app.router.add_get('/', home)
-    app.router.add_get('/watch/{message_id}/{file_name}', stream_handler)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    # Render PORT variable
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    
-    # Bot Start
-    print("Bot & Server Starting...")
-    await bot.start()
-    
-    # Keep running
-    await asyncio.Event().wait()
+    finally:
+        # 6. Cleanup (Space bachane ke liye)
+        if os.path.exists(local_path):
+            os.remove(local_path)
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_services())
+    threading.Thread(target=run_flask, daemon=True).start()
+    bot.run()
