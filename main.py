@@ -1,5 +1,5 @@
 import os
-import time
+import re
 import uuid
 import threading
 from flask import Flask
@@ -12,18 +12,14 @@ load_dotenv()
 
 # --- RENDER PORT FIX ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "Bot is Running Live!"
+def home(): return "Bot is Running Live!"
 
 def run_flask():
-    # Render default port 10000 use karta hai ya PORT env se leta hai
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
-# -----------------------
 
-# Config
+# --- BOT CONFIG ---
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -34,89 +30,84 @@ bot = Client("archive_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKE
 
 def get_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024:
-            return f"{size:.2f} {unit}"
+        if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
+
+def clean_name(text):
+    # Archive.org identifier sirf alphanumeric allow karta hai
+    return re.sub(r'[^a-zA-Z0-9]', '_', text)[:40]
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text(
-        "👋 **Hi! Main taiyar hoon.**\n\n"
-        "Bade files (400MB+) Archive.org pe upload karne ke liye mujhe Video ya PDF bhejo."
-    )
+    await message.reply_text("✅ Bot Active Hai! Video ya PDF bhejo.")
 
 @bot.on_message(filters.video | filters.document)
 async def handle_upload(client, message):
     media = message.video or message.document
-    
-    # Details nikalna
-    file_name = getattr(media, "file_name", f"file_{uuid.uuid4().hex[:5]}")
+    if not media: return
+
+    orig_file_name = getattr(media, "file_name", "file")
     file_size = get_readable_size(media.file_size)
     duration = getattr(media, "duration", 0)
     
-    status = await message.reply_text(f"📥 **Downloading...**\n`{file_name}`\nSize: {file_size}")
+    status = await message.reply_text(f"⏳ **Processing:** `{orig_file_name}`...")
 
-    # Local Path setup
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
-    local_path = os.path.join("downloads", f"{uuid.uuid4().hex}_{file_name}")
+    # Unique identifier banana
+    clean_id = clean_name(orig_file_name)
+    identifier = f"{clean_id}_{uuid.uuid4().hex[:5]}"
     
+    local_path = f"./downloads/{uuid.uuid4().hex}_{orig_file_name}"
+    if not os.path.exists("downloads"): os.makedirs("downloads")
+
     try:
         # 1. Download
         path = await message.download(file_name=local_path)
-        
-        await status.edit(f"📤 **Uploading to Archive.org...**\nSize: {file_size}")
+        await status.edit("📤 **Archive.org pe upload ho raha hai...**")
 
-        # 2. Archive Upload
-        identifier = f"bot_up_{uuid.uuid4().hex[:10]}"
-        
-        meta = {
-            'mediatype': 'movies' if message.video else 'texts',
-            'title': file_name,
-            'description': f'Uploaded via Telegram Bot. Size: {file_size}'
-        }
-
+        # 2. Upload
         upload(
             identifier,
             files=[path],
             access_key=IA_ACCESS_KEY,
             secret_key=IA_SECRET_KEY,
-            metadata=meta
+            metadata={
+                'mediatype': 'movies' if message.video else 'texts',
+                'title': orig_file_name
+            }
         )
 
-        # 3. Links
-        encoded_name = file_name.replace(" ", "%20")
-        direct_link = f"https://archive.org/download/{identifier}/{encoded_name}"
-        viewer_link = f"https://archive.org/details/{identifier}"
-
-        # 4. Final Message
-        res = (
-            f"✅ **Upload Success!**\n\n"
-            f"📄 **Name:** `{file_name}`\n"
-            f"📦 **Size:** {file_size}\n"
-        )
+        # 3. Direct Link taiyar karna (Chrome/Admin ke liye)
+        encoded_name = orig_file_name.replace(" ", "%20")
+        direct_url = f"https://archive.org/download/{identifier}/{encoded_name}"
+        
+        # 4. Final Message Layout
         if message.video:
-            res += f"⏳ **Duration:** {duration}s\n"
+            info_text = f"🎬 **Video Details:**\n📦 **Size:** {file_size}\n⏳ **Length:** {duration} sec"
+            btn_label = "🎥 Watch Online / Direct Link"
+        else:
+            info_text = f"📄 **PDF Details:**\n📦 **Size:** {file_size}"
+            btn_label = "📖 Open PDF / Direct Link"
 
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌐 Open in Browser / Chrome", url=direct_link)],
-            [InlineKeyboardButton("📂 Archive Page", url=viewer_link)]
+        final_response = (
+            f"✅ **Successfully Uploaded!**\n\n"
+            f"🔗 **Direct Link for Admin:**\n`{direct_url}`\n\n"
+            f"{info_text}"
+        )
+
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton(btn_label, url=direct_url)],
+            [InlineKeyboardButton("📂 Archive Page", url=f"https://archive.org/details/{identifier}")]
         ])
 
         await status.delete()
-        await message.reply_text(res, reply_markup=btn)
+        await message.reply_text(final_response, reply_markup=reply_markup)
 
     except Exception as e:
         await status.edit(f"❌ **Error:** {str(e)}")
     
     finally:
-        # 5. Cleanup
-        if os.path.exists(local_path):
-            os.remove(local_path)
+        if os.path.exists(local_path): os.remove(local_path)
 
 if __name__ == "__main__":
-    # Flask ko alag thread mein chalana taaki Render port error na de
     threading.Thread(target=run_flask, daemon=True).start()
-    
-    print("Bot starting...")
     bot.run()
