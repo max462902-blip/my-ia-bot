@@ -3,6 +3,7 @@ import asyncio
 import requests
 import logging
 import time
+import base64
 from pyrogram import Client, filters, idle
 from aiohttp import web
 
@@ -21,7 +22,6 @@ upload_semaphore = asyncio.Semaphore(1)
 
 # --- FILE SIZE FORMATTER ---
 def format_size(bytes):
-    """फाइल साइज को MB/GB में बदलें"""
     if bytes < 1024:
         return f"{bytes} B"
     elif bytes < 1024 * 1024:
@@ -33,7 +33,6 @@ def format_size(bytes):
 
 # --- DURATION FORMATTER ---
 def format_duration(seconds):
-    """वीडियो की अवधि को MM:SS या HH:MM:SS में बदलें"""
     if not seconds:
         return "N/A"
     hours = seconds // 3600
@@ -44,9 +43,51 @@ def format_duration(seconds):
     else:
         return f"{minutes}:{seconds:02d}"
 
-# --- UPLOAD TO FILEMOON (Primary) ---
+# --- GITHUB UPLOAD (PDF के लिए) ---
+def upload_to_github(file_path, filename):
+    """PDF को GitHub पर upload करेगा"""
+    try:
+        # GitHub Token - Render पर Environment Variable में डालना होगा
+        GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+        GITHUB_REPO = os.environ.get("GITHUB_REPO", "yourusername/yourrepo")  # अपना repo name डालो
+        GITHUB_PATH = f"pdfs/{filename}"
+        
+        if not GITHUB_TOKEN:
+            logger.error("GitHub Token not found!")
+            return None
+        
+        # File को base64 में encode करो
+        with open(file_path, "rb") as f:
+            content = base64.b64encode(f.read()).decode("utf-8")
+        
+        # GitHub API call
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        data = {
+            "message": f"Upload {filename} via bot",
+            "content": content
+        }
+        
+        response = requests.put(url, headers=headers, json=data)
+        
+        if response.status_code in [200, 201]:
+            # Raw GitHub URL (सीधा PDF खुलेगा Chrome में)
+            raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_PATH}"
+            logger.info(f"✅ GitHub upload successful: {raw_url}")
+            return raw_url
+        else:
+            logger.error(f"GitHub upload failed: {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"GitHub Error: {e}")
+        return None
+
+# --- UPLOAD TO FILEMOON (Video के लिए) ---
 def upload_filemoon(file_path, filename):
-    """FileMoon पर अपलोड करें - 10GB/file, unlimited storage"""
     try:
         logger.info(f"Uploading to FileMoon: {filename}")
         server_res = requests.get("https://filemoon.sx/api/upload/server", params={"key": "free"})
@@ -71,9 +112,8 @@ def upload_filemoon(file_path, filename):
 
 # --- UPLOAD TO CATBOX (Backup) ---
 def upload_catbox(file_path):
-    """Catbox.moe पर अपलोड करें - Backup server"""
     try:
-        logger.info("Uploading to Catbox (backup)...")
+        logger.info("Uploading to Catbox...")
         url = "https://catbox.moe/user/api.php"
         data = {"reqtype": "fileupload", "userhash": ""}
         with open(file_path, 'rb') as f:
@@ -88,9 +128,8 @@ def upload_catbox(file_path):
 
 # --- UPLOAD TO GOFILE (Ultimate Backup) ---
 def upload_gofile(file_path):
-    """GoFile पर अपलोड करें - जब सब फेल हो जाए"""
     try:
-        logger.info("Uploading to GoFile (ultimate backup)...")
+        logger.info("Uploading to GoFile...")
         server_res = requests.get("https://api.gofile.io/servers")
         if server_res.status_code == 200:
             server_data = server_res.json()
@@ -111,31 +150,31 @@ def upload_gofile(file_path):
         logger.error(f"GoFile Error: {e}")
     return None
 
-# --- PDF UPLOAD HANDLER ---
-def upload_pdf(file_path, filename):
-    """PDF files के लिए अलग handler"""
-    try:
-        url = "https://catbox.moe/user/api.php"
-        data = {"reqtype": "fileupload", "userhash": ""}
-        with open(file_path, 'rb') as f:
-            res = requests.post(url, data=data, files={"fileToUpload": f})
-        if res.status_code == 200:
-            link = res.text.strip()
-            logger.info(f"✅ PDF upload successful: {link}")
-            return link
-    except Exception as e:
-        logger.error(f"PDF Upload Error: {e}")
-    return None
-
 # --- WEB SERVER ---
 async def home(request):
     return web.Response(
         text="""
         <html>
-            <head><title>Uploader Bot</title></head>
-            <body style="font-family: Arial; text-align: center; padding: 50px;">
-                <h1>✅ Bot is Running!</h1>
-                <p>Send video or file to @Filelinkgunerterbot</p>
+            <head>
+                <title>Uploader Bot</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body { font-family: 'Segoe UI', Arial; text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+                    .container { background: rgba(255,255,255,0.95); padding: 30px; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); max-width: 500px; width: 90%; color: #333; }
+                    h1 { color: #667eea; margin-bottom: 20px; }
+                    .status { background: #4CAF50; color: white; padding: 15px; border-radius: 10px; margin: 20px 0; }
+                    .info { background: #f8f9fa; padding: 20px; border-radius: 15px; margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🎥 File Uploader Bot</h1>
+                    <div class="status">✅ Bot is Online!</div>
+                    <div class="info">
+                        <p>📢 <strong>Bot:</strong> @Filelinkgunerterbot</p>
+                        <p>📁 Video + PDF Uploader</p>
+                    </div>
+                </div>
             </body>
         </html>
         """,
@@ -146,36 +185,18 @@ async def home(request):
 @bot.on_message(filters.command("start") & filters.private)
 async def start(c, m):
     await m.reply_text(
-        "👋 **नमस्ते!**\n\n"
-        "मैं फाइल अपलोडर बॉट हूँ। मुझे भेजो:\n"
-        "🎥 **वीडियो** → MP4 Direct Link मिलेगा\n"
-        "📄 **PDF** → Chrome में खुलने वाला PDF Link मिलेगा\n"
-        "📁 **कोई भी फाइल** → Download Link मिलेगा\n\n"
+        "👋 **Welcome!**\n\n"
+        "मैं फाइल अपलोडर बॉट हूँ:\n\n"
+        "🎥 **वीडियो** → Direct MP4 Link\n"
+        "📄 **PDF** → GitHub पर Upload (Chrome में खुलेगा)\n"
+        "📁 **कोई भी फाइल** → Direct Link\n\n"
         "**अभी एक फाइल भेजो!** 🚀"
-    )
-
-@bot.on_message(filters.command("help") & filters.private)
-async def help_cmd(c, m):
-    await m.reply_text(
-        "📚 **Help Guide**\n\n"
-        "🎥 **Video Upload**\n"
-        "• Video भेजो → MP4 Link मिलेगा\n"
-        "• Size और Duration भी दिखेगा\n\n"
-        "📄 **PDF Upload**\n"
-        "• PDF भेजो → Chrome में खुलेगा\n"
-        "• Direct PDF Viewer Link\n\n"
-        "📁 **Other Files**\n"
-        "• कोई भी फाइल भेजो → Download Link\n\n"
-        "**Servers Used:**\n"
-        "• FileMoon (Primary)\n"
-        "• Catbox (Backup)\n"
-        "• GoFile (Ultimate Backup)"
     )
 
 @bot.on_message(filters.video & filters.private)
 async def handle_video(c, m):
     async with upload_semaphore:
-        status = await m.reply_text("⏳ **Step 1/4:** वीडियो डाउनलोड हो रहा है...", quote=True)
+        status = await m.reply_text("⏳ Downloading...", quote=True)
         file_path = None
         try:
             file_name = m.video.file_name or f"video_{m.id}.mp4"
@@ -183,37 +204,37 @@ async def handle_video(c, m):
             duration = m.video.duration
             size_str = format_size(file_size)
             duration_str = format_duration(duration)
-            await status.edit_text(f"⏳ **Step 2/4:** डाउनलोड पूरा! ({size_str})\n📤 अपलोड शुरू...")
+            
+            await status.edit_text(f"⏳ Downloaded ({size_str})\n📤 Uploading...")
             file_path = await m.download()
-            await status.edit_text("⏳ **Step 3/4:** FileMoon पर अपलोड हो रहा है...")
+            
+            await status.edit_text("⏳ Uploading to FileMoon...")
             link = upload_filemoon(file_path, file_name)
             server_used = "FileMoon"
+            
             if not link:
-                await status.edit_text("🔄 FileMoon busy, Catbox try कर रहा हूँ...")
+                await status.edit_text("🔄 Trying Catbox...")
                 link = upload_catbox(file_path)
                 server_used = "Catbox"
+            
             if not link:
-                await status.edit_text("🔄 Catbox भी busy, GoFile try कर रहा हूँ...")
+                await status.edit_text("🔄 Trying GoFile...")
                 link = upload_gofile(file_path)
                 server_used = "GoFile"
+            
             if link:
+                # बस सीधा लिंक भेजो - कोई extra message नहीं
                 await status.edit_text(
-                    f"✅ **Video Upload Complete!**\n\n"
-                    f"📹 **Filename:** `{file_name}`\n"
-                    f"📦 **Size:** `{size_str}`\n"
-                    f"⏱️ **Duration:** `{duration_str}`\n"
-                    f"🌐 **Server:** `{server_used}`\n\n"
-                    f"🔗 **Direct MP4 Link:**\n"
-                    f"`{link}`\n\n"
-                    f"📱 **Click to Play:** {link}\n\n"
-                    f"💾 **This link never expires!**"
+                    f"✅ **Video Ready!**\n\n"
+                    f"📹 `{file_name}`\n"
+                    f"📦 {size_str}  ⏱️ {duration_str}\n\n"
+                    f"🔗 `{link}`"
                 )
-                await m.reply_text(f"🔗 **Your Video Link:**\n{link}", disable_web_page_preview=True)
             else:
-                await status.edit_text("❌ **Upload Failed!** सभी सर्वर व्यस्त हैं।")
+                await status.edit_text("❌ Upload Failed!")
         except Exception as e:
             logger.error(f"Video Error: {e}")
-            await status.edit_text(f"❌ **Error:** {str(e)}")
+            await status.edit_text(f"❌ Error: {str(e)}")
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
@@ -221,44 +242,65 @@ async def handle_video(c, m):
 @bot.on_message(filters.document & filters.private)
 async def handle_document(c, m):
     async with upload_semaphore:
-        status = await m.reply_text("⏳ **Step 1/3:** फाइल डाउनलोड हो रही है...", quote=True)
+        status = await m.reply_text("⏳ Downloading...", quote=True)
         file_path = None
         try:
             file_name = m.document.file_name or f"file_{m.id}"
             file_size = m.document.file_size
             mime_type = m.document.mime_type or ""
             size_str = format_size(file_size)
-            await status.edit_text(f"⏳ **Step 2/3:** डाउनलोड पूरा! ({size_str})\n📤 अपलोड शुरू...")
+            
+            await status.edit_text(f"⏳ Downloaded ({size_str})\n📤 Uploading...")
             file_path = await m.download()
+            
             is_pdf = file_name.lower().endswith('.pdf') or 'pdf' in mime_type.lower()
+            
             if is_pdf:
-                await status.edit_text("⏳ **Step 3/3:** PDF अपलोड हो रहा है...")
-                link = upload_pdf(file_path, file_name)
-                file_type = "📄 PDF"
-                viewer_note = "\n🌐 **Open in Chrome:** यह लिंक Chrome में सीधा खुलेगा"
+                await status.edit_text("⏳ Uploading to GitHub...")
+                
+                # GitHub पर Upload करो
+                github_link = upload_to_github(file_path, file_name)
+                
+                if github_link:
+                    await status.edit_text(
+                        f"✅ **PDF Ready!**\n\n"
+                        f"📄 `{file_name}`\n"
+                        f"📦 {size_str}\n\n"
+                        f"🌐 **Chrome में खुलेगा:**\n"
+                        f"{github_link}"
+                    )
+                else:
+                    # GitHub fail हो जाए तो Catbox backup
+                    await status.edit_text("🔄 GitHub failed, trying Catbox...")
+                    link = upload_catbox(file_path)
+                    if link:
+                        await status.edit_text(
+                            f"✅ **PDF Ready!**\n\n"
+                            f"📄 `{file_name}`\n"
+                            f"📦 {size_str}\n\n"
+                            f"🔗 `{link}`"
+                        )
+                    else:
+                        await status.edit_text("❌ Upload Failed!")
             else:
-                await status.edit_text("⏳ **Step 3/3:** फाइल अपलोड हो रही है...")
+                await status.edit_text("⏳ Uploading to Catbox...")
                 link = upload_catbox(file_path)
                 if not link:
                     link = upload_gofile(file_path)
-                file_type = "📁 File"
-                viewer_note = ""
-            if link:
-                await status.edit_text(
-                    f"✅ **Upload Complete!**\n\n"
-                    f"{file_type} **Name:** `{file_name}`\n"
-                    f"📦 **Size:** `{size_str}`\n"
-                    f"{viewer_note}\n\n"
-                    f"🔗 **Direct Link:**\n"
-                    f"`{link}`\n\n"
-                    f"💾 **This link never expires!**"
-                )
-                await m.reply_text(f"🔗 **Your Link:**\n{link}", disable_web_page_preview=True)
-            else:
-                await status.edit_text("❌ **Upload Failed!** सभी सर्वर व्यस्त हैं।")
+                
+                if link:
+                    await status.edit_text(
+                        f"✅ **File Ready!**\n\n"
+                        f"📁 `{file_name}`\n"
+                        f"📦 {size_str}\n\n"
+                        f"🔗 `{link}`"
+                    )
+                else:
+                    await status.edit_text("❌ Upload Failed!")
+                    
         except Exception as e:
             logger.error(f"Document Error: {e}")
-            await status.edit_text(f"❌ **Error:** {str(e)}")
+            await status.edit_text(f"❌ Error: {str(e)}")
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
