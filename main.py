@@ -54,7 +54,7 @@ def get_readable_size(size):
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("✅ **Branded Bot Ready!**\nFile bhejo, link mere naam ka hoga (HuggingFace Hidden).")
+    await message.reply_text("✅ **Branded Bot Ready!**\nPDF ya video bhejo, opn Link main convert krke de dunga (Teligram id - @Kaal_Shadow ).")
 
 @bot.on_message(filters.video | filters.document)
 async def handle_upload(client, message):
