@@ -1,5 +1,5 @@
 pyrogram
 tgcrypto
-requests
+huggingface_hub
 flask
 python-dotenv
