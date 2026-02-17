@@ -136,7 +136,7 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 Bot Unlocked!")
+            await message.reply_text("🔓 Bot Unlocked! access id shi hai ab apni files bhej skte ho ")
         else:
             await message.reply_text("❌ Galat ID.")
         return
