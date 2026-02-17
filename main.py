@@ -4,7 +4,7 @@ import threading
 import logging
 import asyncio
 from flask import Flask, redirect
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from huggingface_hub import HfApi
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "Secure Bot is Running!"
+def home(): return "Secure Power Bot is Running!"
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
@@ -31,97 +31,60 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # --- CONFIG ---
-API_ID = os.getenv("API_ID")
+API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
-HF_REPO = os.getenv("HF_REPO") 
+HF_REPO = os.getenv("HF_REPO")
+SESSION_STRING = os.getenv("SESSION_STRING") # Link handle karne ke liye zaroori
 
-# --- SECURITY CONFIG (Yahan Password Set Hai) ---
+# --- SECURITY ---
 ACCESS_PASSWORD = "kp_2324"
-# Ye list yaad rakhegi ki kisne sahi password diya hai
 AUTH_USERS = set()
 
-bot = Client("hf_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=2)
+# --- CLIENTS ---
+# 1. Main Bot (Jo user se baat karega)
+bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
+
+# 2. Userbot (Jo Link se file churayega)
+# Agar SESSION_STRING nahi hai to Userbot start nahi hoga
+userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
 
 def get_readable_size(size):
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
 
-# --- COMMANDS ---
-
-@bot.on_message(filters.command("start"))
-async def start(client, message):
-    user_id = message.from_user.id
-    
-    # Check agar user pehle se login hai
-    if user_id in AUTH_USERS:
-        await message.reply_text(
-            "✅ **Access Granted!**\n\n"
-            "Aap login hain. PDF ya Video bhejo, main link bana dunga.\n"
-            "(Admin: @Kaal_Shadow)"
-        )
-    else:
-        await message.reply_text(
-            "🔒 **Bot Locked!**\n\n"
-            "Is bot ko use karne ke liye **Access ID** ki zaroorat hai.\n"
-            "Kripya niche **Access ID** likh kar bhejein."
-        )
-
-# --- PASSWORD CHECKER ---
-@bot.on_message(filters.text & filters.private)
-async def check_password(client, message):
-    user_id = message.from_user.id
-    
-    # Agar user pehle se authorized hai, to text ignore karo (ya chat karo)
-    if user_id in AUTH_USERS:
-        return 
-
-    # Password Check
-    if message.text.strip() == ACCESS_PASSWORD:
-        AUTH_USERS.add(user_id)
-        await message.reply_text(
-            "🔓 **Access Unlocked!**\n\n"
-            "Password sahi hai. Ab aap Files bhej sakte hain."
-        )
-    else:
-        await message.reply_text("❌ **Galat Access ID!**\nSahi ID bhejein ya Admin se contact karein.")
-
-# --- FILE HANDLER ---
-@bot.on_message(filters.video | filters.document)
-async def handle_upload(client, message):
-    # --- SECURITY CHECK ---
-    # Agar user list mein nahi hai, to file reject karo
-    if message.from_user.id not in AUTH_USERS:
-        await message.reply_text("⛔ **Permission Denied!**\n\nPehle `/start` dabayein aur sahi **Access ID** bhejein.")
-        return
-    # ----------------------
-
+# --- COMMON UPLOAD FUNCTION ---
+async def process_and_upload(media, message_to_reply, original_msg=None):
     try:
-        media = message.video or message.document
-        if not media: return
-
-        # 1. File Name Logic
-        if message.video:
+        # File Name Logic
+        if "video" in media.mime_type or (hasattr(media, "duration") and media.duration > 0):
             original_name = f"video_{uuid.uuid4().hex[:5]}.mp4"
+            is_video = True
         else:
-            original_name = media.file_name or f"file_{uuid.uuid4().hex[:5]}.pdf"
+            original_name = getattr(media, "file_name", f"file_{uuid.uuid4().hex[:5]}.pdf")
+            is_video = False
         
         safe_name = original_name.replace(" ", "_").replace("(", "").replace(")", "")
         file_size = get_readable_size(media.file_size)
 
-        status = await message.reply_text(f"⏳ **Processing...**\n`{safe_name}`")
+        status = await message_to_reply.reply_text(f"⏳ **Processing...**\n`{safe_name}`")
 
-        # 2. Download
+        # Download
         if not os.path.exists("downloads"): os.makedirs("downloads")
         local_path = f"downloads/{safe_name}"
         
         await status.edit("⬇️ **Downloading...**")
-        await message.download(file_name=local_path)
+        
+        # Agar msg Userbot ka hai (Link wala) to Userbot download karega
+        if original_msg:
+            await original_msg.download(file_name=local_path)
+        else:
+            await message_to_reply.download(file_name=local_path)
 
-        # 3. Upload
-        await status.edit("⬆️ **Uploading...**")
+        # Upload
+        await status.edit("⬆️ **Uploading to Cloud...**")
         api = HfApi(token=HF_TOKEN)
         
         await asyncio.to_thread(
@@ -134,16 +97,15 @@ async def handle_upload(client, message):
 
         branded_link = f"{SITE_URL}/file/{safe_name}"
         
-        # 4. Success Reply
-        if message.video:
-            msg = f"✅ **Video Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
+        if is_video:
+            msg = f"✅ **Video Saved!**\n\n🔗 **Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
             btn = InlineKeyboardButton("🎬 Play Video", url=branded_link)
         else:
-            msg = f"✅ **PDF Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
+            msg = f"✅ **PDF Saved!**\n\n🔗 **Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
             btn = InlineKeyboardButton("📄 Open PDF", url=branded_link)
 
         await status.delete()
-        await message.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
+        await message_to_reply.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
 
     except Exception as e:
         await status.edit(f"❌ Error: {str(e)}")
@@ -151,6 +113,90 @@ async def handle_upload(client, message):
     finally:
         if os.path.exists(local_path): os.remove(local_path)
 
-if __name__ == "__main__":
+# --- HANDLERS ---
+
+@bot.on_message(filters.command("start"))
+async def start(client, message):
+    if message.from_user.id in AUTH_USERS:
+        await message.reply_text("✅ **Access Granted!**\n\n1. PDF/Video bhejo.\n2. Private Channel ka Link bhejo.")
+    else:
+        await message.reply_text("🔒 **Bot Locked!**\nAccess ID bhejo.")
+
+# TEXT HANDLER (Password Check + Link Handler)
+@bot.on_message(filters.text & filters.private)
+async def handle_text(client, message):
+    user_id = message.from_user.id
+    text = message.text
+
+    # 1. Password Check
+    if user_id not in AUTH_USERS:
+        if text.strip() == ACCESS_PASSWORD:
+            AUTH_USERS.add(user_id)
+            await message.reply_text("🔓 **Unlocked!** password shi hai , Ab Link ya File bhejo.")
+        else:
+            await message.reply_text("❌ Galat ID.")
+        return
+
+    # 2. Link Handler (Agar password sahi hai tabhi yahan aayega)
+    if "t.me/" in text or "telegram.me/" in text:
+        if not userbot:
+            return await message.reply_text("❌ Userbot (Session String) set nahi hai.")
+
+        try:
+            wait_msg = await message.reply_text("🕵️ **Fetching from Private Channel...**")
+            
+            # Link Parsing Logic
+            if "/c/" in text: # Private Link
+                parts = text.split("/")
+                msg_id = int(parts[-1])
+                chat_id = int(f"-100{parts[-2]}") # Prefix fix
+            else: # Public Link
+                parts = text.split("/")
+                msg_id = int(parts[-1])
+                chat_id = parts[-2]
+
+            # Fetch Message using Userbot
+            target_msg = await userbot.get_messages(chat_id, msg_id)
+            
+            media = target_msg.video or target_msg.document
+            if not media:
+                await wait_msg.delete()
+                return await message.reply_text("❌ Wahan koi File nahi mili.")
+
+            await wait_msg.delete()
+            # Process (Original msg pass kiya downloading ke liye)
+            await process_and_upload(media, message, original_msg=target_msg)
+
+        except Exception as e:
+            await message.reply_text(f"❌ Link Error: {e}\n(Kya Userbot us channel mein joined hai?)")
+
+# DIRECT FILE HANDLER
+@bot.on_message(filters.video | filters.document)
+async def handle_file(client, message):
+    if message.from_user.id not in AUTH_USERS:
+        return await message.reply_text("🔒 Locked! Password bhejo.")
+    
+    media = message.video or message.document
+    await process_and_upload(media, message)
+
+# --- MAIN RUNNER ---
+async def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    bot.run()
+    
+    print("Starting Clients...")
+    await bot.start()
+    if userbot:
+        try:
+            await userbot.start()
+            print("Userbot Started!")
+        except Exception as e:
+            print(f"Userbot Error: {e}")
+    
+    print("Bot is Live!")
+    await idle()
+    await bot.stop()
+    if userbot: await userbot.stop()
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
