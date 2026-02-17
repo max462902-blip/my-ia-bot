@@ -121,7 +121,7 @@ async def process_and_upload(media, message_to_reply, original_msg=None):
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Access Granted!**\nAb Link kabhi nahi tootega .")
+        await message.reply_text("✅ **Access Granted!**\napke pass access hai, files bhejo.")
     else:
         await message.reply_text("🔒 **Bot Locked!**\nAccess ID bhejo. ( teligram id - @Kaal_shadow )")
 
