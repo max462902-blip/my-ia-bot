@@ -218,46 +218,44 @@ if userbot:
             await message.edit("😈 **YOU ARE HACKED** 😈")
         except: pass
 
-    # ----------------------------------------------------
-    #  MODIFIED: GLITCH (5 MINUTES LOOP)
+# ----------------------------------------------------
+    #  UPDATED: GLITCH (5 MINUTE GHOST MODE)
     # ----------------------------------------------------
     @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
     async def glitch_mode(client, message):
         try:
-            # Get text from reply or command
+            # 1. Text uthana (Reply se ya command ke aage se)
             if message.reply_to_message and message.reply_to_message.text:
                 target_text = message.reply_to_message.text
             elif len(message.command) > 1:
                 target_text = message.text.split(maxsplit=1)[1]
             else:
-                target_text = "SYSTEM FAILURE"
+                target_text = "GHOST MODE ON"
 
-            # Run loop for 5 minutes (300 seconds)
+            # 2. Timer set karna (300 seconds = 5 Minutes)
             end_time = time.time() + 300 
             
+            # 3. Loop chalana
             while time.time() < end_time:
                 try:
-                    # Choice 1: Show original text
+                    # STEP A: Text Show Hoga
                     await message.edit(f"**{target_text}**")
-                    await asyncio.sleep(random.uniform(0.5, 2.0))
+                    # Thodi der rukega (2 se 5 second)
+                    await asyncio.sleep(random.randint(2, 5))
                     
-                    # Choice 2: Disappear (Empty character)
+                    # STEP B: Text Gayab Hoga (Invisible Character)
                     await message.edit("⠀") 
-                    await asyncio.sleep(random.uniform(0.2, 1.0))
-                    
-                    # Choice 3: Glitch Text
-                    glitch_chars = "¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿"
-                    half = len(target_text) // 2
-                    corrupted = target_text[:half] + "".join(random.choice(glitch_chars) for _ in range(6))
-                    await message.edit(f"`{corrupted}`")
-                    await asyncio.sleep(random.uniform(0.3, 1.5))
+                    # Thodi der gayab rahega (1 se 3 second)
+                    await asyncio.sleep(random.randint(1, 3))
                     
                 except Exception as e:
-                    # Stop if message is deleted or rate limit hit hard
-                    print(e)
+                    # Agar message delete ho gaya ya floodwait aaya to ruk jayega
+                    print(f"Error: {e}")
                     break
             
-            await message.edit("❌ **CONNECTION LOST** ❌")
+            # 4. 5 Minute baad wapis normal text aa jayega
+            await message.edit(f"**{target_text}**")
+            
         except: pass
 
     # ----------------------------------------------------
