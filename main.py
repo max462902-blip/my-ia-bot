@@ -7,7 +7,7 @@ import time
 import re
 import random
 from flask import Flask, redirect
-from pyrogram import Client, filters, idle
+from pyrogram import Client, filters, idle, enums
 from huggingface_hub import HfApi
 from dotenv import load_dotenv
 
@@ -62,7 +62,7 @@ def get_readable_size(size):
         return "Unknown"
 
 # ==========================================
-#  ⬇️ WORKER & LINK GENERATOR ⬇️
+#  ⬇️ WORKER (FILE LINK GENERATOR) ⬇️
 # ==========================================
 
 async def worker_processor():
@@ -170,102 +170,76 @@ async def worker_processor():
                 if user_id in user_queue_numbers: del user_queue_numbers[user_id]
 
 # ==========================================
-#  ⬇️ LEGENDARY HACKER COMMANDS (Userbot) ⬇️
+#  ⬇️ 🔥 ALL PRANK COMMANDS (USERBOT) 🔥 ⬇️
 # ==========================================
 
 if userbot:
-    
-    # 1. ALERT (1 Minute Duration)
-    @userbot.on_message(filters.command("alert", prefixes=".") & filters.me)
-    async def long_alert(client, message):
+
+    # 1. TOKEN EFFECT (.tokon) - Falling Text
+    @userbot.on_message(filters.command("tokon", prefixes=".") & filters.me)
+    async def break_text(client, message):
         try:
-            # 1 minute chalane ke liye (approx 35 loops * 1.6s total delay)
-            # Zyada tez nahi kar sakte warna Telegram block karega (FloodWait)
-            for i in range(35):
-                await message.edit("🔴 **WARNING: SYSTEM BREACH DETECTED!** 🔴\n💀 **HACKER IS HERE** 💀")
-                await asyncio.sleep(0.8)
-                await message.edit("⚫ **WARNING: SYSTEM BREACH DETECTED!** ⚫\n💀 **HACKER IS HERE** 💀")
-                await asyncio.sleep(0.8)
+            if len(message.command) < 2: text = "BROKEN"
+            else: text = message.text.split(maxsplit=1)[1]
             
-            await message.edit("❌ **SYSTEM DESTROYED** ❌\n(Restart Your Device)")
+            end_time = time.time() + 60
+            while time.time() < end_time:
+                # 1. Normal
+                await message.edit(f"**{text}**")
+                await asyncio.sleep(0.8)
+                # 2. Spaced
+                spaced = " ".join(list(text))
+                await message.edit(f"**{spaced}**")
+                await asyncio.sleep(0.5)
+                # 3. Falling (Vertical)
+                falling = "\n".join(list(text))
+                await message.edit(f"**{falling}**")
+                await asyncio.sleep(1)
+                # 4. Crashed (Scattered on floor)
+                crashed = ""
+                for char in text:
+                    crashed += char + (" " * random.randint(1, 4))
+                await message.edit(f"`{crashed}`")
+                await asyncio.sleep(0.5)
+            await message.edit(f"✅ **{text}**")
         except: pass
 
-    # 2. HACK (Complex Sequence - 30 Seconds)
+    # 2. HACKER SEQUENCE (.hack)
     @userbot.on_message(filters.command("hack", prefixes=".") & filters.me)
     async def complex_hack(client, message):
         try:
-            # Phase 1: Data Stealing (8 sec)
-            await message.edit("💻 **CONNECTING TO GROUP DATABASE...**")
-            await asyncio.sleep(1.5)
-            await message.edit("📥 **STEALING USER DATA...** [20%]")
+            await message.edit("💻 **CONNECTING TO SERVER...**")
             await asyncio.sleep(1)
-            await message.edit("📥 **STEALING USER DATA...** [65%]")
+            await message.edit("📥 **STEALING DATA...** [45%]")
             await asyncio.sleep(1)
-            await message.edit("📥 **STEALING USER DATA...** [100%]")
+            await message.edit("📥 **STEALING DATA...** [100%]")
             await asyncio.sleep(1)
-            await message.edit("📂 **DOWNLOADING CHAT HISTORY...**")
-            await asyncio.sleep(1.5)
-            
-            # Phase 2: Processing (3 sec)
-            await message.edit("🔓 **BYPASSING ADMIN SECURITY...**")
-            await asyncio.sleep(1)
-            await message.edit("💀 **INJECTING MALWARE...**")
-            await asyncio.sleep(1)
-
-            # Phase 3: Countdown (5 sec)
             for i in range(5, 0, -1):
-                await message.edit(f"💣 **SYSTEM DESTRUCTION IN {i}...** 💣")
+                await message.edit(f"💣 **DESTRUCTION IN {i}...** 💣")
                 await asyncio.sleep(1)
-            
-            # Phase 4: BLAST (2 sec)
             await message.edit("💥 **BOOM!** 💥")
             await asyncio.sleep(1)
-            
-            # Phase 5: HACKER VIBE (Red/Green Flash) (12 sec)
-            # Ye 'Toast' jaisa flash karega
-            for i in range(8):
+            for i in range(5):
                 await message.edit("🔴 **HACKER COMING...** 🔴")
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.5)
                 await message.edit("🟢 **SYSTEM HACKED!** 🟢")
-                await asyncio.sleep(0.6)
-            
+                await asyncio.sleep(0.5)
             await message.edit("😈 **YOU ARE HACKED** 😈")
         except: pass
 
-    # 3. GLITCH (3 Minutes Duration, Blink Effect)
-    @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
-    async def glitch_text(client, message):
+    # 3. RED ALERT (.alert)
+    @userbot.on_message(filters.command("alert", prefixes=".") & filters.me)
+    async def long_alert(client, message):
         try:
-            if len(message.command) < 2:
-                original_text = "ERROR 404"
-            else:
-                original_text = message.text.split(maxsplit=1)[1]
-            
-            # "Invisible Character" (Ye space jaisa hai par khali dikhta hai)
-            invisible_text = "ㅤ" 
-            
-            # 3 Minutes = 180 Seconds
-            # Loop delay = 1.5s show + 0.5s hide = 2s approx
-            # 180 / 2 = 90 loops
-            
-            end_time = time.time() + 180 # 3 minute baad rukega
-            
-            while time.time() < end_time:
-                # Show Text (Bold mein)
-                await message.edit(f"**{original_text}**")
-                await asyncio.sleep(1.5) # 1.5 second dikhega
-                
-                # Hide Text (Gayab)
-                await message.edit(invisible_text)
-                await asyncio.sleep(0.5) # 0.5 second gayab rahega
-            
-            # Last mein text wapis aa jayega
-            await message.edit(f"**{original_text}**")
-            
-        except Exception as e:
-            print(f"Glitch Error: {e}")
+            for i in range(30):
+                await message.edit("🔴 **WARNING: SYSTEM BREACH!** 🔴")
+                await asyncio.sleep(0.8)
+                await message.edit("⚫ **WARNING: SYSTEM BREACH!** ⚫")
+                await asyncio.sleep(0.8)
+            await message.edit("❌ **SYSTEM DEAD** ❌")
+        except: pass
 
-    # 4. TYPING (.type) - Purana wala hi
+    # 4. TYPING EFFECT (.type)
     @userbot.on_message(filters.command("type", prefixes=".") & filters.me)
     async def type_text(client, message):
         try:
@@ -279,6 +253,92 @@ if userbot:
                     await asyncio.sleep(0.2)
                 except: pass
             await message.edit(f"**{t}**")
+        except: pass
+
+    # 5. GLITCH (REPLY OR TEXT)
+    @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
+    async def glitch_mode(client, message):
+        try:
+            target_text = "ERROR"
+            if message.reply_to_message and message.reply_to_message.text:
+                target_text = message.reply_to_message.text
+            elif len(message.command) > 1:
+                target_text = message.text.split(maxsplit=1)[1]
+            
+            glitch_chars = "¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿"
+            await message.edit(f"**{target_text}**")
+            await asyncio.sleep(1)
+            
+            # 5-6 baar glitch hoga
+            for i in range(6):
+                half = len(target_text) // 2
+                corrupted = target_text[:half] + "".join(random.choice(glitch_chars) for _ in range(8))
+                await message.edit(f"`{corrupted}`")
+                await asyncio.sleep(0.5)
+            
+            await message.edit("❌ **DATA CORRUPTED** ❌")
+        except: pass
+
+    # 6. KAAL STYLES (.kaal)
+    @userbot.on_message(filters.command("kaal", prefixes=".") & filters.me)
+    async def kaal_mode(client, message):
+        try:
+            if len(message.command) < 2: text = "KAAL SHADOW"
+            else: text = message.text.split(maxsplit=1)[1]
+            
+            await message.edit("☠️ **KAAL** ☠️")
+            await asyncio.sleep(1)
+            styles = [
+                f"**{text}**", f"___{text}___", f"`{text}`", 
+                f"||{text}||", f"~~{text}~~", f"[{text}]", f"🔥 {text} 🔥"
+            ]
+            for style in styles:
+                await message.edit(style)
+                await asyncio.sleep(0.8)
+            await message.edit(f"👑 **{text}** 👑")
+        except: pass
+
+    # 7. SCAN (.scan)
+    @userbot.on_message(filters.command("scan", prefixes=".") & filters.me)
+    async def scan_user(client, message):
+        if not message.reply_to_message:
+            await message.edit("❌ Reply kar bhai!")
+            return
+        target = message.reply_to_message.from_user.first_name
+        await message.edit(f"🔍 **SCANNING: {target}**")
+        await asyncio.sleep(1)
+        await message.edit("👤 **MATCH FOUND ✅**")
+        await asyncio.sleep(1)
+        await message.edit(f"📂 **DATA EXTRACTED:**\nName: {target}\nStatus: **HACKED** ⚠️")
+
+    # 8. SELF DESTRUCT (.run)
+    @userbot.on_message(filters.command("run", prefixes=".") & filters.me)
+    async def self_destruct(client, message):
+        await message.edit("💣 **Deleting in 5s...**")
+        for i in range(5, 0, -1):
+            await message.edit(f"💣 **{i}**")
+            await asyncio.sleep(1)
+        await message.edit("💥")
+        await asyncio.sleep(0.5)
+        await message.delete()
+
+    # 9. VIRUS (.virus)
+    @userbot.on_message(filters.command("virus", prefixes=".") & filters.me)
+    async def fake_virus(client, message):
+        if not message.reply_to_message: return
+        target = message.reply_to_message.from_user.first_name
+        await message.edit("⚠️ **SCANNING MESSAGE...**")
+        await asyncio.sleep(1)
+        await message.edit(f"☣️ **VIRUS DETECTED in {target}'s text!**")
+        await asyncio.sleep(1)
+        await message.edit("🗑️ **Quarantining User...**")
+
+    # 10. JITU DEFENDER (AUTO REPLY)
+    @userbot.on_message(filters.group & ~filters.me)
+    async def monitor_chat(client, message):
+        try:
+            if message.text and "jitu" in message.text.lower():
+                await message.reply_text("🗣️ **Correction:** Uska naam Jitu nahi, **Kaal Shadow** hai! 🤫")
         except: pass
 
 # ==========================================
