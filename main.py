@@ -218,45 +218,55 @@ if userbot:
             await message.edit("😈 **YOU ARE HACKED** 😈")
         except: pass
 
-# ----------------------------------------------------
-    #  FIXED: GLITCH (BLINK / GHOST EFFECT)
-    # ----------------------------------------------------
+    # 3. GLITCH (3 Minutes Duration, Blink Effect)
     @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
-    async def glitch_mode(client, message):
+    async def glitch_text(client, message):
         try:
-            # 1. Text uthana
-            target_text = "GHOST MODE" # Default
+            if len(message.command) < 2:
+                original_text = "ERROR 404"
+            else:
+                original_text = message.text.split(maxsplit=1)[1]
             
-            if len(message.command) > 1:
-                # Agar command ke saath likha hai (.glitch Hello)
-                target_text = message.text.split(maxsplit=1)[1]
-            elif message.reply_to_message:
-                # Agar reply kiya hai
-                target_text = message.reply_to_message.text or "Media File"
-
-            # 2. Loop Setup (5 Minutes = 300 Seconds)
-            end_time = time.time() + 300 
+            # "Invisible Character" (Ye space jaisa hai par khali dikhta hai)
+            invisible_text = "ㅤ" 
             
-            # 3. Loop Start
+            # 3 Minutes = 180 Seconds
+            # Loop delay = 1.5s show + 0.5s hide = 2s approx
+            # 180 / 2 = 90 loops
+            
+            end_time = time.time() + 180 # 3 minute baad rukega
+            
             while time.time() < end_time:
-                try:
-                    # STEP A: SHOW TEXT
-                    await message.edit(f"**{target_text}**")
-                    await asyncio.sleep(2) # 2 second dikhega
-                    
-                    # STEP B: HIDE TEXT (Special Empty Character)
-                    await message.edit("⠀") 
-                    await asyncio.sleep(1) # 1 second gayab rahega
-                    
-                except Exception as e:
-                    # Agar FloodWait (Telegram roka) aaye to thoda ruk jayega
-                    await asyncio.sleep(5)
+                # Show Text (Bold mein)
+                await message.edit(f"**{original_text}**")
+                await asyncio.sleep(1.5) # 1.5 second dikhega
+                
+                # Hide Text (Gayab)
+                await message.edit(invisible_text)
+                await asyncio.sleep(0.5) # 0.5 second gayab rahega
             
-            # 4. End hone par wapis text dikha dega
-            await message.edit(f"✅ **{target_text}**")
+            # Last mein text wapis aa jayega
+            await message.edit(f"**{original_text}**")
             
         except Exception as e:
             print(f"Glitch Error: {e}")
+
+    # 4. TYPING (.type) - Purana wala hi
+    @userbot.on_message(filters.command("type", prefixes=".") & filters.me)
+    async def type_text(client, message):
+        try:
+            if len(message.command) < 2: return
+            text = message.text.split(maxsplit=1)[1]
+            t = ""
+            for char in text:
+                t += char
+                try:
+                    await message.edit(f"`{t}█`")
+                    await asyncio.sleep(0.2)
+                except: pass
+            await message.edit(f"**{t}**")
+        except: pass
+
 
 # ----------------------------------------------------
     #  GHOST VOICE COMMAND (.voice [text])
