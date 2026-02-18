@@ -32,7 +32,7 @@ def run_server():
 app = Client("jitu_roast_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
 
 # --- 4. CONFIGURATION ---
-TARGET_USER = "hyr000"   # Shikaar ka Username
+TARGET_USER = "Shubh_am_yadav_8881"   # Shikaar ka Username
 IS_RUNNING = False       # Control Switch
 
 # --- 5. MASSIVE SHAYARI DATABASE (50+ Lines) ---
