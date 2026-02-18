@@ -58,30 +58,39 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- WORKER PROCESSOR (Backbone) ---
+# --- WORKER PROCESSOR ---
 async def worker_processor():
     print("👷 Worker started...")
     while True:
+        # Queue se data nikalo
+        # queue_msg wo message hai jo "Added to Queue" wala hai
         task = await upload_queue.get()
-        client, message, media, media_type, original_msg = task
+        client, message, media, media_type, original_msg, queue_msg = task
         user_id = message.chat.id
         
         local_path = None
         status_msg = None
         
         try:
-            # 1. ORIGINAL NAME (Sirf Dikhane ke liye)
-            original_display_name = "Unknown_File"
+            # 1. PURANA MESSAGE DELETE KARO (Added to Queue wala)
+            try:
+                if queue_msg: await queue_msg.delete()
+            except:
+                pass
+
+            # 2. ORIGINAL NAME (Bilkul Same)
+            original_display_name = "Unknown File"
             if media_type == "document":
                 original_display_name = getattr(media, "file_name", "document.pdf")
             elif media_type == "video":
                 original_display_name = getattr(media, "file_name", "video.mp4")
             elif media_type == "photo":
                 original_display_name = "Image.jpg"
-
+            
+            # Agar naam khali ho to fallback
             if not original_display_name: original_display_name = "File"
 
-            # 2. UNIQUE SYSTEM NAME (Link aur Storage ke liye)
+            # 3. UNIQUE ID NAME (HF ke liye internal name)
             unique_id = uuid.uuid4().hex[:6]
             if media_type == "photo":
                 final_filename = f"image_{unique_id}.jpg"
@@ -90,10 +99,10 @@ async def worker_processor():
             else:
                 final_filename = f"document_{unique_id}.pdf"
 
-            # 3. STATUS MSG
+            # 4. NEW STATUS MSG (Processing...)
             status_msg = await message.reply_text(f"⏳ **Processing:**\n`{original_display_name}`")
             
-            # 4. DOWNLOAD (System Name se save hoga)
+            # 5. DOWNLOAD
             if not os.path.exists("downloads"): os.makedirs("downloads")
             local_path = f"downloads/{final_filename}"
             
@@ -106,7 +115,7 @@ async def worker_processor():
 
             file_size = get_readable_size(os.path.getsize(local_path))
 
-            # 5. UPLOAD TO HF (Unique Name se)
+            # 6. UPLOAD
             await status_msg.edit(f"⬆️ **Uploading...**\n`{original_display_name}`")
             api = HfApi(token=HF_TOKEN)
             
@@ -118,20 +127,19 @@ async def worker_processor():
                 repo_type="dataset"
             )
 
-            # 6. LINK GENERATION
+            # 7. LINK DATA SAVE
             final_link = f"{SITE_URL}/file/{final_filename}"
             
-            # 7. ADD TO BATCH LIST
             if user_id not in user_batches:
                 user_batches[user_id] = []
             
             user_batches[user_id].append({
-                "display_name": original_display_name, # Asli naam dikhane ke liye
-                "link": final_link,                    # Unique link copy ke liye
+                "display_name": original_display_name, # Original Name List ke liye
+                "link": final_link,
                 "size": file_size
             })
 
-            # 8. DELETE STATUS MSG
+            # 8. PROCESS COMPLETE - DELETE STATUS MSG
             await status_msg.delete()
 
         except Exception as e:
@@ -139,15 +147,15 @@ async def worker_processor():
             logging.error(f"Error: {e}")
         
         finally:
-            # 9. DELETE LOCAL FILE (Storage Clear)
+            # 9. STORAGE CLEANUP
             if local_path and os.path.exists(local_path):
                 os.remove(local_path)
             
             upload_queue.task_done()
 
-        # --- FINAL LIST LOGIC ---
+        # --- FINAL LIST GENERATOR ---
         if upload_queue.empty():
-            await asyncio.sleep(2)
+            await asyncio.sleep(2) # Thoda wait taaki confirm ho jaye
             
             if upload_queue.empty() and user_id in user_batches and user_batches[user_id]:
                 data = user_batches[user_id]
@@ -156,15 +164,14 @@ async def worker_processor():
                 final_text = f"✅ **BATCH COMPLETED ({len(data)} Files)**\n\n"
                 
                 for item in data:
-                    # FORMAT:
-                    # 📂 Original Name
+                    # Name (Original)
                     # Link (One Tap Copy)
                     # Size
                     final_text += f"📂 **{item['display_name']}**\n"
                     final_text += f"`{item['link']}`\n"
                     final_text += f"📦 {item['size']}\n\n"
                 
-                final_text += "⚡ **All files processed!**"
+                final_text += "⚡ **All Done!**"
                 
                 try:
                     if len(final_text) > 4000:
@@ -173,8 +180,8 @@ async def worker_processor():
                             await client.send_message(user_id, part)
                     else:
                         await client.send_message(user_id, final_text)
-                except Exception as e:
-                    await client.send_message(user_id, f"❌ Error sending list: {e}")
+                except:
+                    pass
                 
                 del user_batches[user_id]
 
@@ -183,7 +190,7 @@ async def worker_processor():
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Bot Ready!**\nSend files to get links.")
+        await message.reply_text("✅ **Bot Ready!**\nSend multiple files, I will queue them.")
     else:
         await message.reply_text("🔒 **Locked!** Send Access Password.")
 
@@ -215,7 +222,6 @@ async def handle_text(client, message):
             msg_id = int(parts[-1].split("?")[0])
             target_msg = await userbot.get_messages(chat_id, msg_id)
             
-            media = None
             if target_msg.photo: 
                 media = target_msg.photo
                 m_type = "photo"
@@ -225,14 +231,20 @@ async def handle_text(client, message):
             elif target_msg.document: 
                 media = target_msg.document
                 m_type = "document"
-            
-            if media:
-                await wait_msg.delete()
-                pos = upload_queue.qsize() + 1
-                await message.reply_text(f"🕒 **Added to Queue** (No. {pos})", quote=True)
-                await upload_queue.put( (client, message, media, m_type, target_msg) )
             else:
-                await wait_msg.edit("❌ Media not found.")
+                await wait_msg.edit("❌ No media found.")
+                return
+
+            await wait_msg.delete()
+            
+            # Queue Number Logic
+            q_pos = upload_queue.qsize() + 1
+            
+            # Queue Msg Bhejo
+            queue_msg = await message.reply_text(f"🕒 **Added to Queue** (No. {q_pos})", quote=True)
+            
+            # Worker ko bhejo (queue_msg bhi pass kiya taaki wo delete kar sake)
+            await upload_queue.put( (client, message, media, m_type, target_msg, queue_msg) )
 
         except Exception as e:
             await wait_msg.edit(f"❌ Error: {e}")
@@ -249,10 +261,14 @@ async def handle_file(client, message):
     
     media = getattr(message, m_type)
 
-    pos = upload_queue.qsize() + 1
-    await message.reply_text(f"🕒 **Added to Queue** (No. {pos})", quote=True)
+    # Queue Number
+    q_pos = upload_queue.qsize() + 1
+
+    # Queue Msg Bhejo
+    queue_msg = await message.reply_text(f"🕒 **Added to Queue** (No. {q_pos})", quote=True)
     
-    await upload_queue.put( (client, message, media, m_type, None) )
+    # Worker ko data + queue_msg bhejo
+    await upload_queue.put( (client, message, media, m_type, None, queue_msg) )
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
