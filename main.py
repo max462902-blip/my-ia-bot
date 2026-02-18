@@ -42,6 +42,12 @@ SESSION_STRING = os.getenv("SESSION_STRING")
 ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
+# --- QUEUE & BATCH DATA ---
+# Ye queue ensure karega ki files ek-ek karke hi process hon
+upload_queue = asyncio.Queue()
+# Ye dictionary user ke links store karegi final list ke liye
+user_batches = {}
+
 # --- CLIENTS ---
 bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
 userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
@@ -54,77 +60,121 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- MAIN UPLOAD FUNCTION (Photo Added) ---
-async def process_and_upload(media, message_to_reply, original_msg=None, media_type=None):
-    try:
-        unique_id = uuid.uuid4().hex[:6]
+# --- WORKER FUNCTION (Backbone) ---
+async def worker_processor():
+    print("👷 Worker started and waiting for files...")
+    while True:
+        # Queue se item nikalo
+        task = await upload_queue.get()
         
-        # --- NAME & TYPE DETECTION ---
-        if media_type == "photo":
-            final_filename = f"image_{unique_id}.jpg"
-            file_type_msg = "🖼️ Image"
-        elif media_type == "video":
-            final_filename = f"video_{unique_id}.mp4"
-            file_type_msg = "🎬 Video"
-        else:
-            final_filename = f"document_{unique_id}.pdf"
-            file_type_msg = "📄 PDF"
+        # Data unpack karo
+        client, message, media, media_type, original_msg = task
+        user_id = message.chat.id
         
-        file_size = get_readable_size(getattr(media, "file_size", 0))
-
-        status = await message_to_reply.reply_text(f"⏳ **Processing...**\n`{final_filename}`")
-
-        # Download Path
-        if not os.path.exists("downloads"): os.makedirs("downloads")
-        local_path = f"downloads/{final_filename}"
+        local_path = None
+        status = None
         
-        await status.edit("⬇️ **Downloading...**")
+        try:
+            # 1. Filename Generate
+            unique_id = uuid.uuid4().hex[:6]
+            if media_type == "photo":
+                final_filename = f"image_{unique_id}.jpg"
+                file_type_msg = "🖼️ Image"
+            elif media_type == "video":
+                final_filename = f"video_{unique_id}.mp4"
+                file_type_msg = "🎬 Video"
+            else:
+                final_filename = f"document_{unique_id}.pdf"
+                file_type_msg = "📄 PDF"
+
+            # 2. Status Message
+            status = await message.reply_text(f"⏳ **Processing in Queue...**\n`{final_filename}`")
+            
+            # 3. Download (Sirf abhi download hoga, jab pichla khatam ho gaya)
+            if not os.path.exists("downloads"): os.makedirs("downloads")
+            local_path = f"downloads/{final_filename}"
+            
+            await status.edit("⬇️ **Downloading...**")
+            
+            if original_msg:
+                await original_msg.download(file_name=local_path)
+            else:
+                await message.download(file_name=local_path)
+
+            file_size = get_readable_size(os.path.getsize(local_path))
+
+            # 4. Upload to HuggingFace
+            await status.edit("⬆️ **Uploading to HF...**")
+            api = HfApi(token=HF_TOKEN)
+            
+            await asyncio.to_thread(
+                api.upload_file,
+                path_or_fileobj=local_path,
+                path_in_repo=final_filename,
+                repo_id=HF_REPO,
+                repo_type="dataset"
+            )
+
+            # 5. Link Generation
+            branded_link = f"{SITE_URL}/file/{final_filename}"
+            
+            # 6. User ke batch list mein add karo
+            if user_id not in user_batches:
+                user_batches[user_id] = []
+            
+            user_batches[user_id].append({
+                "name": final_filename,
+                "link": branded_link,
+                "size": file_size,
+                "type": file_type_msg
+            })
+
+            # Single message update (Optional: isko hata sakte ho agar sirf last list chahiye)
+            await status.edit(f"✅ **Uploaded!**\nWaiting for queue to finish...")
+            # Thoda wait taaki msg flood na ho
+            await asyncio.sleep(1) 
+            await status.delete()
+
+        except Exception as e:
+            if status: await status.edit(f"❌ Error: {str(e)}")
+            logging.error(f"Error in worker: {e}")
         
-        # Download
-        if original_msg:
-            await original_msg.download(file_name=local_path)
-        else:
-            await message_to_reply.download(file_name=local_path)
+        finally:
+            # 7. IMPORTANT: Delete local file IMMEDIATELY
+            if local_path and os.path.exists(local_path):
+                os.remove(local_path)
+                print(f"🗑️ Deleted local file: {local_path}")
+            
+            # Task done mark karo
+            upload_queue.task_done()
 
-        # Upload
-        await status.edit("⬆️ **Uploading...**")
-        api = HfApi(token=HF_TOKEN)
-        
-        await asyncio.to_thread(
-            api.upload_file,
-            path_or_fileobj=local_path,
-            path_in_repo=final_filename,
-            repo_id=HF_REPO,
-            repo_type="dataset"
-        )
-
-        branded_link = f"{SITE_URL}/file/{final_filename}"
-        
-        # Reply Logic
-        if media_type == "video":
-            btn = InlineKeyboardButton("🎬 Play Video", url=branded_link)
-        elif media_type == "photo":
-            btn = InlineKeyboardButton("🖼️ View Image", url=branded_link)
-        else:
-            btn = InlineKeyboardButton("📄 Open PDF", url=branded_link)
-
-        msg = f"✅ **{file_type_msg} Saved!**\n\n🔗 **Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
-
-        await status.delete()
-        await message_to_reply.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
-
-    except Exception as e:
-        await status.edit(f"❌ Error: {str(e)}")
-    
-    finally:
-        if os.path.exists(local_path): os.remove(local_path)
+        # --- FINAL LIST LOGIC ---
+        # Check karo agar queue khali hai, to list bhej do
+        if upload_queue.empty():
+            # Thoda wait karo shayad user aur files bhej raha ho
+            await asyncio.sleep(4) 
+            if upload_queue.empty() and user_id in user_batches and user_batches[user_id]:
+                # List banao
+                batch_msg = "📦 **BATCH UPLOAD COMPLETE** 📦\n\n"
+                for item in user_batches[user_id]:
+                    batch_msg += f"{item['type']}: [{item['name']}]({item['link']}) ({item['size']})\n"
+                
+                batch_msg += "\n✅ **All files processed & storage cleared!**"
+                
+                try:
+                    await client.send_message(user_id, batch_msg, disable_web_page_preview=True)
+                except:
+                    pass
+                
+                # List clear karo agli baar ke liye
+                del user_batches[user_id]
 
 # --- HANDLERS ---
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Access Granted!**\nAb PDF, Video aur **Photos** bhejo.")
+        await message.reply_text("✅ **Access Granted!**\nFiles bhejo. Main unhe queue mein laga kar ek-ek karke upload karunga.")
     else:
         await message.reply_text("🔒 **Bot Locked!**\nAccess ID bhejo. ( Telegram ID - @Kaal_shadow )")
 
@@ -136,7 +186,7 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 Bot Unlocked! access id shi hai ab apni files bhej skte ho ")
+            await message.reply_text("🔓 Bot Unlocked! Files bhejo.")
         else:
             await message.reply_text("❌ Galat ID.")
         return
@@ -145,27 +195,19 @@ async def handle_text(client, message):
     if "t.me/" in text or "telegram.me/" in text:
         if not userbot: return await message.reply_text("❌ Userbot missing.")
         
-        wait_msg = await message.reply_text("🕵️ **Fetching Content...**")
+        wait_msg = await message.reply_text("🕵️ **Queuing Link...**")
         try:
-            # Smart Parsing
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
 
-            # Determine Chat ID
             if parts[0] == "c":
                 chat_id = int("-100" + parts[1])
             else:
                 chat_id = parts[0]
             
-            # Determine Message ID (Last part is always msg_id)
-            # Remove query parameters if any (like ?single)
-            msg_id_part = parts[-1].split("?")[0]
-            msg_id = int(msg_id_part)
-
-            # Fetch Message
+            msg_id = int(parts[-1].split("?")[0])
             target_msg = await userbot.get_messages(chat_id, msg_id)
             
-            # Detect Media Type
             if target_msg.photo:
                 media = target_msg.photo
                 m_type = "photo"
@@ -177,15 +219,19 @@ async def handle_text(client, message):
                 m_type = "document"
             else:
                 await wait_msg.delete()
-                return await message.reply_text("❌ Is link par koi File/Photo nahi mili.")
+                return await message.reply_text("❌ No Media Found.")
 
             await wait_msg.delete()
-            await process_and_upload(media, message, original_msg=target_msg, media_type=m_type)
+            
+            # QUEUE MEIN ADD KARO
+            pos = upload_queue.qsize() + 1
+            await message.reply_text(f"✅ Added to Queue (Position: {pos})")
+            await upload_queue.put( (client, message, media, m_type, target_msg) )
             
         except Exception as e:
-            await message.reply_text(f"❌ Error: {e}\n\n*Note:* Agar private link hai to Userbot join hona chahiye.")
+            await message.reply_text(f"❌ Error: {e}")
 
-# DIRECT FILE HANDLER (Photo Added)
+# DIRECT FILE HANDLER
 @bot.on_message(filters.video | filters.document | filters.photo)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
@@ -201,10 +247,20 @@ async def handle_file(client, message):
         media = message.document
         m_type = "document"
 
-    await process_and_upload(media, message, media_type=m_type)
+    # Seedha upload process call karne ki jagah Queue mein daalenge
+    pos = upload_queue.qsize() + 1
+    # User ko batao ki file line mein lag gayi hai
+    await message.reply_text(f"🕒 **Added to Queue**\nPosition: {pos}\nWait for processing...", quote=True)
+    
+    # Worker ke liye data pack karo
+    await upload_queue.put( (client, message, media, m_type, None) )
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Worker start karo background mein
+    asyncio.create_task(worker_processor())
+    
     await bot.start()
     if userbot: await userbot.start()
     await idle()
