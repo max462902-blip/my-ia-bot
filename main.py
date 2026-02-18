@@ -219,44 +219,44 @@ if userbot:
         except: pass
 
 # ----------------------------------------------------
-    #  UPDATED: GLITCH (5 MINUTE GHOST MODE)
+    #  FIXED: GLITCH (BLINK / GHOST EFFECT)
     # ----------------------------------------------------
     @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
     async def glitch_mode(client, message):
         try:
-            # 1. Text uthana (Reply se ya command ke aage se)
-            if message.reply_to_message and message.reply_to_message.text:
-                target_text = message.reply_to_message.text
-            elif len(message.command) > 1:
+            # 1. Text uthana
+            target_text = "GHOST MODE" # Default
+            
+            if len(message.command) > 1:
+                # Agar command ke saath likha hai (.glitch Hello)
                 target_text = message.text.split(maxsplit=1)[1]
-            else:
-                target_text = "GHOST MODE ON"
+            elif message.reply_to_message:
+                # Agar reply kiya hai
+                target_text = message.reply_to_message.text or "Media File"
 
-            # 2. Timer set karna (300 seconds = 5 Minutes)
+            # 2. Loop Setup (5 Minutes = 300 Seconds)
             end_time = time.time() + 300 
             
-            # 3. Loop chalana
+            # 3. Loop Start
             while time.time() < end_time:
                 try:
-                    # STEP A: Text Show Hoga
+                    # STEP A: SHOW TEXT
                     await message.edit(f"**{target_text}**")
-                    # Thodi der rukega (2 se 5 second)
-                    await asyncio.sleep(random.randint(2, 5))
+                    await asyncio.sleep(2) # 2 second dikhega
                     
-                    # STEP B: Text Gayab Hoga (Invisible Character)
+                    # STEP B: HIDE TEXT (Special Empty Character)
                     await message.edit("⠀") 
-                    # Thodi der gayab rahega (1 se 3 second)
-                    await asyncio.sleep(random.randint(1, 3))
+                    await asyncio.sleep(1) # 1 second gayab rahega
                     
                 except Exception as e:
-                    # Agar message delete ho gaya ya floodwait aaya to ruk jayega
-                    print(f"Error: {e}")
-                    break
+                    # Agar FloodWait (Telegram roka) aaye to thoda ruk jayega
+                    await asyncio.sleep(5)
             
-            # 4. 5 Minute baad wapis normal text aa jayega
-            await message.edit(f"**{target_text}**")
+            # 4. End hone par wapis text dikha dega
+            await message.edit(f"✅ **{target_text}**")
             
-        except: pass
+        except Exception as e:
+            print(f"Glitch Error: {e}")
 
     # ----------------------------------------------------
     #  MODIFIED: SCAN (DETAILED & PRANK STATS)
@@ -293,7 +293,7 @@ if userbot:
             total_msgs = random.randint(35, 5000)
             
             # 3. Fake Most Used Word/Topic
-            topics = ["Love", "Paisa", "Settings", "Daru", "Admin", "Hacking", "Dhoka", "Notes", "Assignment"]
+            topics = ["Love", "Paisa", "Settings", "Daru", "Admin", "juth jyda bolta hai", "Dhoka", "Notes", "Assignment"]
             fav_topic = random.choice(topics)
             
             # 4. Fake Online Count
