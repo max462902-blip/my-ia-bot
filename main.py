@@ -3,9 +3,9 @@ import uuid
 import threading
 import logging
 import asyncio
+import time
 from flask import Flask, redirect
 from pyrogram import Client, filters, idle
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from huggingface_hub import HfApi
 from dotenv import load_dotenv
 
@@ -18,7 +18,7 @@ app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "All-Rounder Bot is Running!"
+def home(): return "Bot is Running!"
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
@@ -43,9 +43,7 @@ ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
 # --- QUEUE & BATCH DATA ---
-# Ye queue ensure karega ki files ek-ek karke hi process hon
 upload_queue = asyncio.Queue()
-# Ye dictionary user ke links store karegi final list ke liye
 user_batches = {}
 
 # --- CLIENTS ---
@@ -60,41 +58,46 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- WORKER FUNCTION (Backbone) ---
+# --- WORKER PROCESSOR (Backbone) ---
 async def worker_processor():
-    print("👷 Worker started and waiting for files...")
+    print("👷 Worker started...")
     while True:
-        # Queue se item nikalo
         task = await upload_queue.get()
-        
-        # Data unpack karo
         client, message, media, media_type, original_msg = task
         user_id = message.chat.id
         
         local_path = None
-        status = None
+        status_msg = None
         
         try:
-            # 1. Filename Generate
+            # 1. ORIGINAL NAME (Sirf Dikhane ke liye)
+            original_display_name = "Unknown_File"
+            if media_type == "document":
+                original_display_name = getattr(media, "file_name", "document.pdf")
+            elif media_type == "video":
+                original_display_name = getattr(media, "file_name", "video.mp4")
+            elif media_type == "photo":
+                original_display_name = "Image.jpg"
+
+            if not original_display_name: original_display_name = "File"
+
+            # 2. UNIQUE SYSTEM NAME (Link aur Storage ke liye)
             unique_id = uuid.uuid4().hex[:6]
             if media_type == "photo":
                 final_filename = f"image_{unique_id}.jpg"
-                file_type_msg = "🖼️ Image"
             elif media_type == "video":
                 final_filename = f"video_{unique_id}.mp4"
-                file_type_msg = "🎬 Video"
             else:
                 final_filename = f"document_{unique_id}.pdf"
-                file_type_msg = "📄 PDF"
 
-            # 2. Status Message
-            status = await message.reply_text(f"⏳ **Processing in Queue...**\n`{final_filename}`")
+            # 3. STATUS MSG
+            status_msg = await message.reply_text(f"⏳ **Processing:**\n`{original_display_name}`")
             
-            # 3. Download (Sirf abhi download hoga, jab pichla khatam ho gaya)
+            # 4. DOWNLOAD (System Name se save hoga)
             if not os.path.exists("downloads"): os.makedirs("downloads")
             local_path = f"downloads/{final_filename}"
             
-            await status.edit("⬇️ **Downloading...**")
+            await status_msg.edit(f"⬇️ **Downloading...**\n`{original_display_name}`")
             
             if original_msg:
                 await original_msg.download(file_name=local_path)
@@ -103,8 +106,8 @@ async def worker_processor():
 
             file_size = get_readable_size(os.path.getsize(local_path))
 
-            # 4. Upload to HuggingFace
-            await status.edit("⬆️ **Uploading to HF...**")
+            # 5. UPLOAD TO HF (Unique Name se)
+            await status_msg.edit(f"⬆️ **Uploading...**\n`{original_display_name}`")
             api = HfApi(token=HF_TOKEN)
             
             await asyncio.to_thread(
@@ -115,58 +118,64 @@ async def worker_processor():
                 repo_type="dataset"
             )
 
-            # 5. Link Generation
-            branded_link = f"{SITE_URL}/file/{final_filename}"
+            # 6. LINK GENERATION
+            final_link = f"{SITE_URL}/file/{final_filename}"
             
-            # 6. User ke batch list mein add karo
+            # 7. ADD TO BATCH LIST
             if user_id not in user_batches:
                 user_batches[user_id] = []
             
             user_batches[user_id].append({
-                "name": final_filename,
-                "link": branded_link,
-                "size": file_size,
-                "type": file_type_msg
+                "display_name": original_display_name, # Asli naam dikhane ke liye
+                "link": final_link,                    # Unique link copy ke liye
+                "size": file_size
             })
 
-            # Single message update (Optional: isko hata sakte ho agar sirf last list chahiye)
-            await status.edit(f"✅ **Uploaded!**\nWaiting for queue to finish...")
-            # Thoda wait taaki msg flood na ho
-            await asyncio.sleep(1) 
-            await status.delete()
+            # 8. DELETE STATUS MSG
+            await status_msg.delete()
 
         except Exception as e:
-            if status: await status.edit(f"❌ Error: {str(e)}")
-            logging.error(f"Error in worker: {e}")
+            if status_msg: await status_msg.edit(f"❌ Error: {str(e)}")
+            logging.error(f"Error: {e}")
         
         finally:
-            # 7. IMPORTANT: Delete local file IMMEDIATELY
+            # 9. DELETE LOCAL FILE (Storage Clear)
             if local_path and os.path.exists(local_path):
                 os.remove(local_path)
-                print(f"🗑️ Deleted local file: {local_path}")
             
-            # Task done mark karo
             upload_queue.task_done()
 
         # --- FINAL LIST LOGIC ---
-        # Check karo agar queue khali hai, to list bhej do
         if upload_queue.empty():
-            # Thoda wait karo shayad user aur files bhej raha ho
-            await asyncio.sleep(4) 
+            await asyncio.sleep(2)
+            
             if upload_queue.empty() and user_id in user_batches and user_batches[user_id]:
-                # List banao
-                batch_msg = "📦 **BATCH UPLOAD COMPLETE** 📦\n\n"
-                for item in user_batches[user_id]:
-                    batch_msg += f"{item['type']}: [{item['name']}]({item['link']}) ({item['size']})\n"
+                data = user_batches[user_id]
                 
-                batch_msg += "\n✅ **All files processed & storage cleared!**"
+                # Header
+                final_text = f"✅ **BATCH COMPLETED ({len(data)} Files)**\n\n"
+                
+                for item in data:
+                    # FORMAT:
+                    # 📂 Original Name
+                    # Link (One Tap Copy)
+                    # Size
+                    final_text += f"📂 **{item['display_name']}**\n"
+                    final_text += f"`{item['link']}`\n"
+                    final_text += f"📦 {item['size']}\n\n"
+                
+                final_text += "⚡ **All files processed!**"
                 
                 try:
-                    await client.send_message(user_id, batch_msg, disable_web_page_preview=True)
-                except:
-                    pass
+                    if len(final_text) > 4000:
+                        parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
+                        for part in parts:
+                            await client.send_message(user_id, part)
+                    else:
+                        await client.send_message(user_id, final_text)
+                except Exception as e:
+                    await client.send_message(user_id, f"❌ Error sending list: {e}")
                 
-                # List clear karo agli baar ke liye
                 del user_batches[user_id]
 
 # --- HANDLERS ---
@@ -174,9 +183,9 @@ async def worker_processor():
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Access Granted!**\nFiles bhejo. Main unhe queue mein laga kar ek-ek karke upload karunga.")
+        await message.reply_text("✅ **Bot Ready!**\nSend files to get links.")
     else:
-        await message.reply_text("🔒 **Bot Locked!**\nAccess ID bhejo. ( Telegram ID - @Kaal_shadow )")
+        await message.reply_text("🔒 **Locked!** Send Access Password.")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
@@ -186,81 +195,68 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 Bot Unlocked! Files bhejo.")
+            await message.reply_text("🔓 **Unlocked!**")
         else:
-            await message.reply_text("❌ Galat ID.")
+            await message.reply_text("❌ Wrong Password.")
         return
 
-    # Link Handler
+    # Userbot Link Handler
     if "t.me/" in text or "telegram.me/" in text:
-        if not userbot: return await message.reply_text("❌ Userbot missing.")
+        if not userbot: return await message.reply_text("❌ Userbot Missing.")
         
-        wait_msg = await message.reply_text("🕵️ **Queuing Link...**")
+        wait_msg = await message.reply_text("🕵️ **Checking Link...**")
         try:
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
-
-            if parts[0] == "c":
-                chat_id = int("-100" + parts[1])
-            else:
-                chat_id = parts[0]
+            
+            if parts[0] == "c": chat_id = int("-100" + parts[1])
+            else: chat_id = parts[0]
             
             msg_id = int(parts[-1].split("?")[0])
             target_msg = await userbot.get_messages(chat_id, msg_id)
             
-            if target_msg.photo:
+            media = None
+            if target_msg.photo: 
                 media = target_msg.photo
                 m_type = "photo"
-            elif target_msg.video:
+            elif target_msg.video: 
                 media = target_msg.video
                 m_type = "video"
-            elif target_msg.document:
+            elif target_msg.document: 
                 media = target_msg.document
                 m_type = "document"
-            else:
+            
+            if media:
                 await wait_msg.delete()
-                return await message.reply_text("❌ No Media Found.")
+                pos = upload_queue.qsize() + 1
+                await message.reply_text(f"🕒 **Added to Queue** (No. {pos})", quote=True)
+                await upload_queue.put( (client, message, media, m_type, target_msg) )
+            else:
+                await wait_msg.edit("❌ Media not found.")
 
-            await wait_msg.delete()
-            
-            # QUEUE MEIN ADD KARO
-            pos = upload_queue.qsize() + 1
-            await message.reply_text(f"✅ Added to Queue (Position: {pos})")
-            await upload_queue.put( (client, message, media, m_type, target_msg) )
-            
         except Exception as e:
-            await message.reply_text(f"❌ Error: {e}")
+            await wait_msg.edit(f"❌ Error: {e}")
 
-# DIRECT FILE HANDLER
+# Direct File Handler
 @bot.on_message(filters.video | filters.document | filters.photo)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
         return await message.reply_text("🔒 Locked!")
     
-    if message.photo:
-        media = message.photo
-        m_type = "photo"
-    elif message.video:
-        media = message.video
-        m_type = "video"
-    else:
-        media = message.document
-        m_type = "document"
-
-    # Seedha upload process call karne ki jagah Queue mein daalenge
-    pos = upload_queue.qsize() + 1
-    # User ko batao ki file line mein lag gayi hai
-    await message.reply_text(f"🕒 **Added to Queue**\nPosition: {pos}\nWait for processing...", quote=True)
+    if message.photo: m_type = "photo"
+    elif message.video: m_type = "video"
+    else: m_type = "document"
     
-    # Worker ke liye data pack karo
+    media = getattr(message, m_type)
+
+    pos = upload_queue.qsize() + 1
+    await message.reply_text(f"🕒 **Added to Queue** (No. {pos})", quote=True)
+    
     await upload_queue.put( (client, message, media, m_type, None) )
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    
-    # Worker start karo background mein
     asyncio.create_task(worker_processor())
-    
     await bot.start()
     if userbot: await userbot.start()
     await idle()
