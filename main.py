@@ -258,6 +258,43 @@ if userbot:
         except Exception as e:
             print(f"Glitch Error: {e}")
 
+# ----------------------------------------------------
+    #  GHOST VOICE COMMAND (.voice [text])
+    # ----------------------------------------------------
+    @userbot.on_message(filters.command("voice", prefixes=".") & filters.me)
+    async def ghost_voice(client, message):
+        try:
+            # 1. Tera likha hua message delete karega (Saboot mitana)
+            await message.delete()
+
+            # 2. Check karega ki tune kuch likha hai ya nahi
+            if len(message.command) < 2:
+                return 
+            
+            # 3. Text nikalega
+            text = message.text.split(maxsplit=1)[1]
+            
+            # 4. Google se awaaz banwayega (Hindi Accent)
+            from gtts import gTTS
+            tts = gTTS(text=text, lang='hi') 
+            file_name = "ghost.mp3"
+            tts.save(file_name)
+            
+            # 5. Voice bhejega
+            if message.reply_to_message:
+                # Agar kisi ke message pe reply kiya hai
+                await message.reply_to_message.reply_voice(file_name)
+            else:
+                # Normal group mein bhejega
+                await client.send_voice(message.chat.id, file_name)
+            
+            # 6. File delete kar dega taaki space na bhare
+            if os.path.exists(file_name):
+                os.remove(file_name)
+                
+        except Exception as e:
+            print(f"Voice Error: {e}")
+    
     # ----------------------------------------------------
     #  MODIFIED: SCAN (DETAILED & PRANK STATS)
     # ----------------------------------------------------
