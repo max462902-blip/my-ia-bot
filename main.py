@@ -277,9 +277,8 @@ if userbot:
             await message.edit(f"💥 **DELIVERY RECEIVED:**\n\n**{text}**") # Reveal
         except: pass
         
-
-    # ----------------------------------------------------
-    #  MODIFIED: SCAN (DETAILED & PRANK STATS)
+# ----------------------------------------------------
+    #  MODIFIED: SCAN (REAL BIO + PHOTO + PRANK STATS)
     # ----------------------------------------------------
     @userbot.on_message(filters.command("scan", prefixes=".") & filters.me)
     async def scan_user(client, message):
@@ -288,9 +287,10 @@ if userbot:
             return
 
         try:
-            user = message.reply_to_message.from_user
+            target = message.reply_to_message.from_user
             target_msg = message.reply_to_message.text or "[Media/Sticker]"
             
+            # --- ANIMATION ---
             await message.edit("🔍 **INITIALIZING SCAN...**")
             await asyncio.sleep(1)
             await message.edit("📡 **FETCHING DATABASE RECORDS...**")
@@ -298,32 +298,34 @@ if userbot:
             await message.edit("🔐 **BYPASSING SECURITY PROTOCOLS...**")
             await asyncio.sleep(1)
 
-            # --- REAL DATA ---
-            name = user.first_name
-            last_name = user.last_name if user.last_name else ""
+            # --- REAL DATA FETCHING ---
+            # Bio nikalne ke liye full chat details chahiye
+            try:
+                full_user = await client.get_chat(target.id)
+                bio = full_user.bio if full_user.bio else "No Bio Set"
+            except:
+                bio = "Hidden/Private"
+
+            name = target.first_name
+            last_name = target.last_name if target.last_name else ""
             full_name = f"{name} {last_name}".strip()
-            user_id = user.id
-            username = f"@{user.username}" if user.username else "No Username"
+            user_id = target.id
+            username = f"@{target.username}" if target.username else "No Username"
             
-            # --- FAKE/PRANK DATA GENERATION ---
-            # 1. Fake Phone Number
+            # --- PRANK DATA (Activity Stats) ---
+            # Note: Phone Model/Battery hata diya hai jaisa tune bola
+            
+            # 1. Fake Phone Number (Masked)
             fake_phone = "xxxxxxxxxx"
             
-            # 2. Fake Message Count
+            # 2. Activity Stats
             total_msgs = random.randint(35, 5000)
-            
-            # 3. Fake Most Used Word/Topic
             topics = ["Love", "Paisa", "Settings", "Daru", "Admin", "Hacking", "Dhoka", "Notes", "Assignment"]
             fav_topic = random.choice(topics)
-            
-            # 4. Fake Online Count
             online_count = random.randint(5, 150)
-            
-            # 5. Fake Group Left Count
             left_count = random.randint(0, 10)
             
-            # 6. Time Calculation (Last Active)
-            # Since we can't get exact seconds usually, we fake the precision
+            # 3. Time
             now = datetime.now()
             day = now.strftime("%A")
             time_str = now.strftime("%H:%M:%S")
@@ -335,6 +337,7 @@ if userbot:
 • Name: {full_name}
 • ID: `{user_id}`
 • User: {username}
+• Bio: `{bio}`
 • Phone: `{fake_phone}` 🔒
 • Location: 🚫 **NOT ALLOWED**
 
@@ -351,11 +354,28 @@ if userbot:
 
 ⚠️ **STATUS:** **SUSPICIOUS ACTIVITY FOUND**
 """
-            await message.edit(report)
+            
+            # --- PHOTO HANDLING ---
+            # Check karte hain DP hai ya nahi
+            photos = []
+            async for photo in client.get_chat_photos(target.id, limit=1):
+                photos.append(photo)
+
+            if photos:
+                # Agar DP hai: Purana text delete karo aur Photo bhejo
+                await message.delete()
+                await client.send_photo(
+                    message.chat.id,
+                    photo=photos[0].file_id,
+                    caption=report,
+                    reply_to_message_id=message.reply_to_message.id # Original bande ko tag karega
+                )
+            else:
+                # Agar DP nahi hai: Sirf Text edit karo
+                await message.edit(report)
             
         except Exception as e:
             await message.edit(f"❌ Error: {e}")
-
     # ----------------------------------------------------
 
     # 4. TYPING EFFECT (.type)
