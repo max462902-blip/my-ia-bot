@@ -252,6 +252,32 @@ if userbot:
             print(f"Glitch Error: {e}")
 
 
+    
+    # ✈️ 3. AIRPLANE DROP (.air <text>)
+    @userbot.on_message(filters.command("air", prefixes=".") & filters.me)
+    async def airplane_drop(client, message):
+        if not PRANK_ACTIVE: return
+        try:
+            if len(message.command) < 2: text = "BOOM"
+            else: text = message.text.split(maxsplit=1)[1]
+            
+            # Animation Frames
+            await message.edit("☁️ . . . . . . . . . .")
+            await asyncio.sleep(0.5)
+            await message.edit("☁️ ✈️ . . . . . . . .") # Plane Enter
+            await asyncio.sleep(0.5)
+            await message.edit("☁️ . . ✈️ . . . . . .")
+            await asyncio.sleep(0.5)
+            await message.edit("☁️ . . . . ✈️ 🪂 . . .") # Drop Parachute
+            await asyncio.sleep(0.5)
+            await message.edit("☁️ . . . . . . ✈️ . 📦") # Plane Leave
+            await asyncio.sleep(0.5)
+            await message.edit(f"⬇️\n\n📦") # Box Falling
+            await asyncio.sleep(0.5)
+            await message.edit(f"💥 **DELIVERY RECEIVED:**\n\n**{text}**") # Reveal
+        except: pass
+        
+
     # ----------------------------------------------------
     #  MODIFIED: SCAN (DETAILED & PRANK STATS)
     # ----------------------------------------------------
