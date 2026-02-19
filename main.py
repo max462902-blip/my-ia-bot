@@ -457,7 +457,7 @@ async def start(client, message):
     if message.from_user.id in AUTH_USERS:
         await message.reply_text("✅ **Bot Ready!**\nFiles bhejo.")
     else:
-        await message.reply_text("🔒 **Locked!** Send Password.")
+        await message.reply_text("🔒 **Locked!** Send Password. password nhi pta to admin se bat kro ( teligram id - @kaal_shadow )")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
@@ -467,9 +467,9 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Unlocked!**")
+            await message.reply_text("🔓 **Unlocked! password shi hai files bhejo **")
         else:
-            await message.reply_text("❌ Wrong Password.")
+            await message.reply_text("❌ Wrong Password. shi password dalo ya admin se bat kro ( teligram id - @kaal_shadow )")
         return
 
     if "t.me/" in text or "telegram.me/" in text:
