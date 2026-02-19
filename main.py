@@ -26,8 +26,7 @@ def home(): return "Bot is Running!"
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
     hf_repo = os.environ.get("HF_REPO")
-    # ?download=true hata diya taki Chrome view kare
-    real_url = f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}"
+    real_url = f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}?download=true"
     return redirect(real_url, code=302)
 
 def run_flask():
@@ -45,9 +44,6 @@ SESSION_STRING = os.getenv("SESSION_STRING")
 # --- SECURITY ---
 ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
-
-# --- GLOBAL VARIABLES ---
-PRANK_ACTIVE = True  # Master Switch (Default ON)
 
 # --- QUEUE SYSTEM ---
 upload_queue = asyncio.Queue()
@@ -69,6 +65,7 @@ def get_readable_size(size):
 # ==========================================
 #  ⬇️ WORKER (FILE LINK GENERATOR) ⬇️
 # ==========================================
+# ... (Keep the worker_processor function exactly as it was in your code) ...
 async def worker_processor():
     print("👷 Worker started...")
     while True:
@@ -133,8 +130,7 @@ async def worker_processor():
                 repo_type="dataset"
             )
 
-            # Direct HF Link (For Chrome View)
-            final_link = f"https://huggingface.co/datasets/{HF_REPO}/resolve/main/{final_filename}"
+            final_link = f"{SITE_URL}/file/{final_filename}"
             
             if user_id not in user_batches: user_batches[user_id] = []
             user_batches[user_id].append({
@@ -175,78 +171,14 @@ async def worker_processor():
                 if user_id in user_queue_numbers: del user_queue_numbers[user_id]
 
 # ==========================================
-#  ⬇️ 🔥 NEW FEATURES & PRANKS 🔥 ⬇️
+#  ⬇️ 🔥 ALL PRANK COMMANDS (USERBOT) 🔥 ⬇️
 # ==========================================
 
 if userbot:
 
-    # 🟢 1. MASTER SWITCH (.prankon / .prankoff)
-    @userbot.on_message(filters.command("prankon", prefixes=".") & filters.me)
-    async def enable_prank(client, message):
-        global PRANK_ACTIVE
-        PRANK_ACTIVE = True
-        await message.edit("🟢 **MASTER SWITCH:** PRANK MODE **ON**")
-
-    @userbot.on_message(filters.command("prankoff", prefixes=".") & filters.me)
-    async def disable_prank(client, message):
-        global PRANK_ACTIVE
-        PRANK_ACTIVE = False
-        await message.edit("🔴 **MASTER SWITCH:** PRANK MODE **OFF**")
-
-
-    # 🖼️ 2. HACKER BACKGROUND TEXT (.text <msg>)
-    @userbot.on_message(filters.command("text", prefixes=".") & filters.me)
-    async def hacker_bg_text(client, message):
-        if not PRANK_ACTIVE: return # Agar switch OFF hai to kaam nahi karega
-        try:
-            if len(message.command) < 2: return
-            text_content = message.text.split(maxsplit=1)[1]
-            
-            # Hacker Image URL (Matrix/Anonymous)
-            hacker_img = "https://w0.peakpx.com/wallpaper/168/223/HD-wallpaper-hacker-binary-code-matrix-technology.jpg"
-            
-            await message.delete()
-            await client.send_photo(
-                chat_id=message.chat.id,
-                photo=hacker_img,
-                caption=f"💻 **SECURE TRANSMISSION** 💻\n\n`{text_content}`\n\n💀 **ENCRYPTED MSG**"
-            )
-        except: pass
-
-
-    # ✈️ 3. AIRPLANE DROP (.air <text>)
-    @userbot.on_message(filters.command("air", prefixes=".") & filters.me)
-    async def airplane_drop(client, message):
-        if not PRANK_ACTIVE: return
-        try:
-            if len(message.command) < 2: text = "BOOM"
-            else: text = message.text.split(maxsplit=1)[1]
-            
-            # Animation Frames
-            await message.edit("☁️ . . . . . . . . . .")
-            await asyncio.sleep(0.5)
-            await message.edit("☁️ ✈️ . . . . . . . .") # Plane Enter
-            await asyncio.sleep(0.5)
-            await message.edit("☁️ . . ✈️ . . . . . .")
-            await asyncio.sleep(0.5)
-            await message.edit("☁️ . . . . ✈️ 🪂 . . .") # Drop Parachute
-            await asyncio.sleep(0.5)
-            await message.edit("☁️ . . . . . . ✈️ . 📦") # Plane Leave
-            await asyncio.sleep(0.5)
-            await message.edit(f"⬇️\n\n📦") # Box Falling
-            await asyncio.sleep(0.5)
-            await message.edit(f"💥 **DELIVERY RECEIVED:**\n\n**{text}**") # Reveal
-        except: pass
-
-
-    # ----------------------------------------------------
-    #  EXISTING PRANKS (WITH MASTER SWITCH CHECK)
-    # ----------------------------------------------------
-
-    # .tokon
+    # 1. TOKEN EFFECT (.tokon)
     @userbot.on_message(filters.command("tokon", prefixes=".") & filters.me)
     async def break_text(client, message):
-        if not PRANK_ACTIVE: return # Check added
         try:
             if len(message.command) < 2: text = "BROKEN"
             else: text = message.text.split(maxsplit=1)[1]
@@ -268,10 +200,9 @@ if userbot:
             await message.edit(f"✅ **{text}**")
         except: pass
 
-    # .hack
+    # 2. HACKER SEQUENCE (.hack)
     @userbot.on_message(filters.command("hack", prefixes=".") & filters.me)
     async def complex_hack(client, message):
-        if not PRANK_ACTIVE: return
         try:
             await message.edit("💻 **CONNECTING TO SERVER...**")
             await asyncio.sleep(1)
@@ -287,70 +218,96 @@ if userbot:
             await message.edit("😈 **YOU ARE HACKED** 😈")
         except: pass
 
-    # .glitch (5 Mins)
+    # 3. GLITCH (3 Minutes Duration, Blink Effect)
     @userbot.on_message(filters.command("glitch", prefixes=".") & filters.me)
-    async def glitch_mode(client, message):
-        if not PRANK_ACTIVE: return
+    async def glitch_text(client, message):
         try:
-            if message.reply_to_message and message.reply_to_message.text:
-                target_text = message.reply_to_message.text
-            elif len(message.command) > 1:
-                target_text = message.text.split(maxsplit=1)[1]
-            else: target_text = "SYSTEM FAILURE"
-
-            end_time = time.time() + 300 
+            if len(message.command) < 2:
+                original_text = "ERROR 404"
+            else:
+                original_text = message.text.split(maxsplit=1)[1]
+            
+            # "Invisible Character" (Ye space jaisa hai par khali dikhta hai)
+            invisible_text = "ㅤ" 
+            
+            # 3 Minutes = 180 Seconds
+            # Loop delay = 1.5s show + 0.5s hide = 2s approx
+            # 180 / 2 = 90 loops
+            
+            end_time = time.time() + 180 # 3 minute baad rukega
+            
             while time.time() < end_time:
-                try:
-                    await message.edit(f"**{target_text}**")
-                    await asyncio.sleep(random.uniform(0.5, 2.0))
-                    await message.edit("⠀") 
-                    await asyncio.sleep(random.uniform(0.2, 1.0))
-                    glitch_chars = "¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿"
-                    half = len(target_text) // 2
-                    corrupted = target_text[:half] + "".join(random.choice(glitch_chars) for _ in range(6))
-                    await message.edit(f"`{corrupted}`")
-                    await asyncio.sleep(random.uniform(0.3, 1.5))
-                except Exception as e: break
-            await message.edit("❌ **CONNECTION LOST** ❌")
-        except: pass
+                # Show Text (Bold mein)
+                await message.edit(f"**{original_text}**")
+                await asyncio.sleep(1.5) # 1.5 second dikhega
+                
+                # Hide Text (Gayab)
+                await message.edit(invisible_text)
+                await asyncio.sleep(0.5) # 0.5 second gayab rahega
+            
+            # Last mein text wapis aa jayega
+            await message.edit(f"**{original_text}**")
+            
+        except Exception as e:
+            print(f"Glitch Error: {e}")
 
-    # .scan (Detailed)
+
+    # ----------------------------------------------------
+    #  MODIFIED: SCAN (DETAILED & PRANK STATS)
+    # ----------------------------------------------------
     @userbot.on_message(filters.command("scan", prefixes=".") & filters.me)
     async def scan_user(client, message):
-        if not PRANK_ACTIVE: return
         if not message.reply_to_message:
             await message.edit("❌ **Reply to a user!**")
             return
+
         try:
             user = message.reply_to_message.from_user
-            target_msg = message.reply_to_message.text or "[Media]"
+            target_msg = message.reply_to_message.text or "[Media/Sticker]"
+            
             await message.edit("🔍 **INITIALIZING SCAN...**")
             await asyncio.sleep(1)
             await message.edit("📡 **FETCHING DATABASE RECORDS...**")
             await asyncio.sleep(1)
             await message.edit("🔐 **BYPASSING SECURITY PROTOCOLS...**")
             await asyncio.sleep(1)
-            
-            # Data Generation
+
+            # --- REAL DATA ---
             name = user.first_name
-            full_name = f"{name} {user.last_name or ''}".strip()
+            last_name = user.last_name if user.last_name else ""
+            full_name = f"{name} {last_name}".strip()
+            user_id = user.id
             username = f"@{user.username}" if user.username else "No Username"
-            fake_phone = f"+91 {random.randint(600, 999)}xxxxx{random.randint(10, 99)}"
+            
+            # --- FAKE/PRANK DATA GENERATION ---
+            # 1. Fake Phone Number
+            fake_phone = "xxxxxxxxxx"
+            
+            # 2. Fake Message Count
             total_msgs = random.randint(35, 5000)
-            topics = ["Love", "Paisa", "Settings", "Daru", "Admin", "Hacking", "Dhoka", "Notes"]
+            
+            # 3. Fake Most Used Word/Topic
+            topics = ["Love", "Paisa", "Settings", "Daru", "Admin", "Hacking", "Dhoka", "Notes", "Assignment"]
             fav_topic = random.choice(topics)
+            
+            # 4. Fake Online Count
             online_count = random.randint(5, 150)
+            
+            # 5. Fake Group Left Count
             left_count = random.randint(0, 10)
+            
+            # 6. Time Calculation (Last Active)
+            # Since we can't get exact seconds usually, we fake the precision
             now = datetime.now()
             day = now.strftime("%A")
             time_str = now.strftime("%H:%M:%S")
-
+            
             report = f"""
 ☠️ **USER REPORT DETECTED** ☠️
 
 👤 **IDENTITY:**
 • Name: {full_name}
-• ID: `{user.id}`
+• ID: `{user_id}`
 • User: {username}
 • Phone: `{fake_phone}` 🔒
 • Location: 🚫 **NOT ALLOWED**
@@ -369,12 +326,15 @@ if userbot:
 ⚠️ **STATUS:** **SUSPICIOUS ACTIVITY FOUND**
 """
             await message.edit(report)
-        except: pass
+            
+        except Exception as e:
+            await message.edit(f"❌ Error: {e}")
 
-    # .type
+    # ----------------------------------------------------
+
+    # 4. TYPING EFFECT (.type)
     @userbot.on_message(filters.command("type", prefixes=".") & filters.me)
     async def type_text(client, message):
-        if not PRANK_ACTIVE: return
         try:
             if len(message.command) < 2: return
             text = message.text.split(maxsplit=1)[1]
@@ -388,37 +348,50 @@ if userbot:
             await message.edit(f"**{t}**")
         except: pass
 
-    # .kaal
+    # 6. KAAL STYLES (.kaal)
     @userbot.on_message(filters.command("kaal", prefixes=".") & filters.me)
     async def kaal_mode(client, message):
-        if not PRANK_ACTIVE: return
         try:
             if len(message.command) < 2: text = "KAAL SHADOW"
             else: text = message.text.split(maxsplit=1)[1]
+            
             await message.edit("☠️ **KAAL** ☠️")
             await asyncio.sleep(1)
-            styles = [f"**{text}**", f"___{text}___", f"`{text}`", f"||{text}||", f"~~{text}~~", f"[{text}]", f"🔥 {text} 🔥"]
+            styles = [
+                f"**{text}**", f"___{text}___", f"`{text}`", 
+                f"||{text}||", f"~~{text}~~", f"[{text}]", f"🔥 {text} 🔥"
+            ]
             for style in styles:
                 await message.edit(style)
                 await asyncio.sleep(0.8)
             await message.edit(f"👑 **{text}** 👑")
         except: pass
 
-    # .virus
+    # 8. SELF DESTRUCT (.run)
+    @userbot.on_message(filters.command("run", prefixes=".") & filters.me)
+    async def self_destruct(client, message):
+        await message.edit("💣 **Deleting in 5s...**")
+        for i in range(5, 0, -1):
+            await message.edit(f"💣 **{i}**")
+            await asyncio.sleep(1)
+        await message.edit("💥")
+        await asyncio.sleep(0.5)
+        await message.delete()
+
+    # 9. VIRUS (.virus)
     @userbot.on_message(filters.command("virus", prefixes=".") & filters.me)
     async def fake_virus(client, message):
-        if not PRANK_ACTIVE: return
         if not message.reply_to_message: return
+        target = message.reply_to_message.from_user.first_name
         await message.edit("⚠️ **SCANNING MESSAGE...**")
         await asyncio.sleep(1)
-        await message.edit(f"☣️ **VIRUS DETECTED!**")
+        await message.edit(f"☣️ **VIRUS DETECTED in {target}'s text!**")
         await asyncio.sleep(1)
         await message.edit("🗑️ **Quarantining User...**")
 
-    # .alert
+    # 2. HACKER ALERT (.alert)
     @userbot.on_message(filters.command("alert", prefixes=".") & filters.me)
     async def hacker_alert(client, message):
-        if not PRANK_ACTIVE: return
         try:
             for i in range(7):
                 await message.edit("🔴 **WARNING: SYSTEM BREACH DETECTED!** 🔴\n💀 **HACKER IS HERE** 💀")
@@ -428,44 +401,35 @@ if userbot:
             await message.edit("❌ **SYSTEM DESTROYED** ❌\n(Restart Required)")
         except: pass
 
-    # .run (Self Destruct)
-    @userbot.on_message(filters.command("run", prefixes=".") & filters.me)
-    async def self_destruct(client, message):
-        if not PRANK_ACTIVE: return
-        await message.edit("💣 **Deleting in 5s...**")
-        for i in range(5, 0, -1):
-            await message.edit(f"💣 **{i}**")
-            await asyncio.sleep(1)
-        await message.edit("💥")
-        await asyncio.sleep(0.5)
-        await message.delete()
-
-    # Auto Jitu Defender (Respect)
-    @userbot.on_message(filters.group & ~filters.me)
-    async def jitu_def(client, message):
-        if not PRANK_ACTIVE: return # Ye bhi off ho jayega agar master switch off hai
-        if message.text and "jitu" in message.text.lower():
-            try: await message.reply_text("🗣️ **Oye!** Jitu nahi, **Kaal Shadow** bol! 🤫")
-            except: pass
 
 # ==========================================
-#  ⬇️ NORMAL BOT START ⬇️
+#  ⬇️ NORMAL BOT HANDLERS ⬇️
 # ==========================================
+
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    if message.from_user.id in AUTH_USERS: await message.reply_text("✅ Bot Online!")
-    else: await message.reply_text("🔒 Locked!")
+    if message.from_user.id in AUTH_USERS:
+        await message.reply_text("✅ **Bot Ready!**\nFiles bhejo.")
+    else:
+        await message.reply_text("🔒 **Locked!** Send Password.")
 
 @bot.on_message(filters.text & filters.private)
-async def auth_and_link(client, message):
-    if message.text == ACCESS_PASSWORD:
-        AUTH_USERS.add(message.from_user.id)
-        await message.reply_text("🔓 Unlocked!")
-    elif message.from_user.id in AUTH_USERS and "t.me/" in message.text:
-        # Link Handler Logic
+async def handle_text(client, message):
+    user_id = message.from_user.id
+    text = message.text
+
+    if user_id not in AUTH_USERS:
+        if text.strip() == ACCESS_PASSWORD:
+            AUTH_USERS.add(user_id)
+            await message.reply_text("🔓 **Unlocked!**")
+        else:
+            await message.reply_text("❌ Wrong Password.")
+        return
+
+    if "t.me/" in text or "telegram.me/" in text:
         if not userbot: return await message.reply_text("❌ Userbot Missing.")
         try:
-            clean_link = message.text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
+            clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
             if parts[0] == "c": chat_id = int("-100" + parts[1])
             else: chat_id = parts[0]
@@ -478,9 +442,9 @@ async def auth_and_link(client, message):
             
             media = getattr(target_msg, m_type, None)
             if media:
-                if message.from_user.id not in user_queue_numbers: user_queue_numbers[message.from_user.id] = 0
-                user_queue_numbers[message.from_user.id] += 1
-                q_pos = user_queue_numbers[message.from_user.id]
+                if user_id not in user_queue_numbers: user_queue_numbers[user_id] = 0
+                user_queue_numbers[user_id] += 1
+                q_pos = user_queue_numbers[user_id]
                 queue_msg = await message.reply_text(f"🕒 **Added to Queue** (No. {q_pos})", quote=True)
                 await upload_queue.put( (client, message, media, m_type, target_msg, queue_msg) )
             else:
@@ -489,12 +453,20 @@ async def auth_and_link(client, message):
             await message.reply_text(f"❌ Error: {e}")
 
 @bot.on_message(filters.video | filters.document | filters.photo)
-async def handle_media(client, message):
-    if message.from_user.id in AUTH_USERS:
-        m_type = "video" if message.video else "photo" if message.photo else "document"
-        q_pos = upload_queue.qsize() + 1
-        q_msg = await message.reply_text(f"🕒 Queue No. {q_pos}")
-        await upload_queue.put((client, message, getattr(message, m_type), m_type, None, q_msg))
+async def handle_file(client, message):
+    if message.from_user.id not in AUTH_USERS: return
+    user_id = message.from_user.id
+    m_type = "document"
+    if message.photo: m_type = "photo"
+    elif message.video: m_type = "video"
+    media = getattr(message, m_type)
+
+    if user_id not in user_queue_numbers: user_queue_numbers[user_id] = 0
+    user_queue_numbers[user_id] += 1
+    q_pos = user_queue_numbers[user_id]
+
+    queue_msg = await message.reply_text(f"🕒 **Added to Queue** (No. {q_pos})", quote=True)
+    await upload_queue.put( (client, message, media, m_type, None, queue_msg) )
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
@@ -502,6 +474,9 @@ async def main():
     await bot.start()
     if userbot: await userbot.start()
     await idle()
+    await bot.stop()
+    if userbot: await userbot.stop()
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
