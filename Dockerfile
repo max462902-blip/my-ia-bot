@@ -13,4 +13,3 @@ COPY . .
 
 # Run bot
 CMD ["python", "main.py"]
-y
