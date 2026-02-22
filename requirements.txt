@@ -1,6 +1,6 @@
 pyrogram
 tgcrypto
-huggingface_hub
 flask
+huggingface-hub
 python-dotenv
-requests
+yt-dlp
