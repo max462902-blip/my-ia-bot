@@ -1,10 +1,6 @@
-
 pyrogram
 tgcrypto
-flask
 huggingface_hub
-python-dotenv
-gTTS
-requests
-pyTelegramBotAPI
 flask
+python-dotenv
+requests
