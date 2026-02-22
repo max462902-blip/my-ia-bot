@@ -95,15 +95,15 @@ async def process_queue_engine(client, message, tasks):
     total = len(tasks)
     completed_links = []
     
-    # Batch folder setup
+    # Batch Setup
     batch_id = uuid.uuid4().hex
     batch_folder = f"downloads/{batch_id}"
     os.makedirs(batch_folder, exist_ok=True)
     
-    # Status Message
+    # 1. Single Status Message (Yehi update hota rahega)
     status_msg = await message.reply_text(
-        f"⏳ **Starting Task...**\n"
-        f"📂 Files: `{total}`"
+        f"⏳ **Starting Queue...**\n"
+        f"📊 Total Files: `{total}`"
     )
     
     try:
@@ -112,24 +112,23 @@ async def process_queue_engine(client, message, tasks):
             data = task['data']
             task_type = task['type']
             
-            # Variables Reset
+            # Reset Variables
             local_path = None
             final_path = None
-            display_name = "Unknown File"
+            display_name = data.get('name', 'Unknown File')
             file_size_mb = 0.0
             media_type = "document"
 
             try:
                 # --- STEP 1: DOWNLOADING ---
-                temp_name = data.get('name', 'File')
-                
-                # Update Status: Downloading
+                # Message Edit karein (Naya message nahi bhejenge)
                 await status_msg.edit(
                     f"⬇️ **Downloading ({current_num}/{total})**\n\n"
-                    f"📄 File: `{temp_name}`\n"
+                    f"📂 File: `{display_name}`\n"
                     f"⚡ Please Wait..."
                 )
 
+                # ... (Download Logic Same as Before) ...
                 if task_type in ["direct_media", "link"]:
                     msg = None
                     if task_type == "direct_media":
@@ -145,8 +144,7 @@ async def process_queue_engine(client, message, tasks):
                         except:
                             if user_bot: msg = await user_bot.get_messages(chat_id, msg_id)
                         
-                        if not msg or not msg.media:
-                            raise Exception("Media not found.")
+                        if not msg or not msg.media: raise Exception("Media not found.")
                         
                         if msg.document: 
                             display_name = msg.document.file_name or "Document"
@@ -161,7 +159,6 @@ async def process_queue_engine(client, message, tasks):
                             display_name = "Image"
                             media_type = "photo"
 
-                    # Download
                     downloader = user_bot if user_bot else client
                     temp_filename = f"temp_{uuid.uuid4().hex}"
                     local_path = await downloader.download_media(msg, file_name=f"{batch_folder}/{temp_filename}")
@@ -172,7 +169,7 @@ async def process_queue_engine(client, message, tasks):
                     display_name = yt_title
                     media_type = "video"
 
-                # --- STEP 2: PROCESSING ---
+                # --- STEP 2: SIZE CHECK & RENAMING ---
                 if not local_path or not os.path.exists(local_path):
                     raise Exception("Download failed.")
 
@@ -180,15 +177,16 @@ async def process_queue_engine(client, message, tasks):
                 final_path = os.path.join(batch_folder, secure_name)
                 os.rename(local_path, final_path)
 
-                # Size Calculation
+                # ✅ Accurate Size Calculation
                 if os.path.exists(final_path):
                     file_size_bytes = os.path.getsize(final_path)
                     file_size_mb = file_size_bytes / (1024 * 1024)
-
+                
                 # --- STEP 3: UPLOADING ---
+                # Message Edit (Ab Uploading dikhayega)
                 await status_msg.edit(
                     f"☁️ **Uploading ({current_num}/{total})**\n\n"
-                    f"📄 File: `{display_name}`\n"
+                    f"📂 File: `{display_name}`\n"
                     f"📦 Size: `{file_size_mb:.2f} MB`\n"
                     f"🚀 Sending to Cloud..."
                 )
@@ -204,12 +202,11 @@ async def process_queue_engine(client, message, tasks):
 
                 final_link = f"{SITE_URL}/file/{secure_name}"
                 
-                # ✅ TOUCH TO COPY FORMAT
-                # `backticks` lagane se Telegram isko copy-box bana deta hai
+                # ✅ NEW FORMAT (Link Beech mein, Size Niche)
                 entry = (
                     f"📂 **{display_name}**\n"
-                    f"📦 Size: {file_size_mb:.2f} MB\n"
-                    f"🔗 `{final_link}`"
+                    f"🔗 `{final_link}`\n"
+                    f"📦 Size: {file_size_mb:.2f} MB"
                 )
                 completed_links.append(entry)
 
@@ -223,17 +220,18 @@ async def process_queue_engine(client, message, tasks):
 
     finally:
         if os.path.exists(batch_folder): shutil.rmtree(batch_folder)
+        
+        # ✅ Status Message Delete (Kaam khatam hote hi)
         try: await status_msg.delete()
         except: pass
 
-    # --- FINAL LIST ---
-    # Beech mein line ka gap taki saaf dikhe
+    # --- FINAL DELIVERY (Ek Saath) ---
     final_text = "**✅ Batch Completed**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
     
     if len(final_text) > 4000:
         with open("Direct_Links.txt", "w", encoding="utf-8") as f:
             f.write(final_text.replace("**", "").replace("`", ""))
-        await message.reply_document("Direct_Links.txt", caption="✅ **Links File Ready**")
+        await message.reply_document("Direct_Links.txt", caption="✅ **All Links Ready**")
         os.remove("Direct_Links.txt")
     else:
         await message.reply_text(final_text, disable_web_page_preview=True)
