@@ -64,3 +64,13 @@ if __name__ == "__main__":
     t = Thread(target=run_web)
     t.start()
     run_bot()
+# --- SIRF YE PART CHANGE KARO ---
+
+def run_bot():
+    print("Bot polling start ho gayi...")
+    # Ye line add karo:
+    bot.remove_webhook() 
+    # Thoda delay aur interval add kiya hai taaki crash na ho
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+
+# --------------------------------
