@@ -16,16 +16,18 @@ from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 
-# --- SERVER KEEPER ---
+# --- SERVER KEEPER (FLASK) ---
 app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "Bot is Running!"
+def home(): return "Bot is Running! (Made by Kaal)"
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
     hf_repo = os.environ.get("HF_REPO")
+    if not hf_repo:
+        return "Error: HF_REPO not set in Environment Variables", 404
     real_url = f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}?download=true"
     return redirect(real_url, code=302)
 
@@ -33,16 +35,24 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- CONFIG ---
-api_id = int(os.getenv("API_ID"))
-api_hash = os.getenv("API_HASH")
-bot_token = os.getenv("BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_REPO = os.getenv("HF_REPO")
-SESSION_STRING = os.getenv("SESSION_STRING")
+# --- CONFIGURATION (FIXED VARIABLES) ---
+# Ye variables ab BADE (Uppercase) hain taaki niche error na aaye
+try:
+    API_ID = int(os.environ.get("API_ID")) 
+    API_HASH = os.environ.get("API_HASH")
+    BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    HF_TOKEN = os.environ.get("HF_TOKEN")
+    HF_REPO = os.environ.get("HF_REPO")
+    SESSION_STRING = os.environ.get("SESSION_STRING") # Optional
+    
+    # Password Setting
+    ACCESS_PASSWORD = os.environ.get("ACCESS_PASSWORD", "kp_2324")
+    
+    print("✅ Config Loaded Successfully!")
+except Exception as e:
+    print(f"❌ Error in Config: {e}")
+    print("⚠️ Render Environment Variables Check karo! (API_ID, BOT_TOKEN etc.)")
 
-# --- SECURITY ---
-ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
 # --- QUEUE SYSTEM ---
@@ -50,9 +60,17 @@ upload_queue = asyncio.Queue()
 user_batches = {}
 user_queue_numbers = {}
 
-# --- CLIENTS ---
+# --- CLIENTS INITIALIZATION ---
+# Main Bot
 bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
-userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
+
+# Userbot (Sirf tab chalega agar Session String hogi)
+userbot = None
+if SESSION_STRING:
+    print("✅ Userbot Session Found! Starting Userbot...")
+    userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4)
+else:
+    print("⚠️ Userbot Session Missing. Prank commands nahi chalenge.")
 
 def get_readable_size(size):
     try:
@@ -65,7 +83,6 @@ def get_readable_size(size):
 # ==========================================
 #  ⬇️ WORKER (FILE LINK GENERATOR) ⬇️
 # ==========================================
-# ... (Keep the worker_processor function exactly as it was in your code) ...
 async def worker_processor():
     print("👷 Worker started...")
     while True:
@@ -171,11 +188,8 @@ async def worker_processor():
                 if user_id in user_queue_numbers: del user_queue_numbers[user_id]
 
 # ==========================================
-#  ⬇️ 🔥 ALL PRANK COMMANDS (USERBOT) 🔥 ⬇️
+#  ⬇️ 🔥 USERBOT PRANK COMMANDS 🔥 ⬇️
 # ==========================================
-
-if userbot:
-
     # 1. TOKEN EFFECT (.tokon)
     @userbot.on_message(filters.command("tokon", prefixes=".") & filters.me)
     async def break_text(client, message):
@@ -199,7 +213,6 @@ if userbot:
                 await asyncio.sleep(0.5)
             await message.edit(f"✅ **{text}**")
         except: pass
-
     # 2. HACKER SEQUENCE (.hack)
     @userbot.on_message(filters.command("hack", prefixes=".") & filters.me)
     async def complex_hack(client, message):
@@ -277,7 +290,7 @@ if userbot:
             await message.edit(f"💥 **DELIVERY RECEIVED:**\n\n**{text}**") # Reveal
         except: pass
         
-# ----------------------------------------------------
+
     #  MODIFIED: SCAN (REAL BIO + PHOTO + PRANK STATS)
     # ----------------------------------------------------
     @userbot.on_message(filters.command("scan", prefixes=".") & filters.me)
@@ -394,24 +407,6 @@ if userbot:
             await message.edit(f"**{t}**")
         except: pass
 
-    # 6. KAAL STYLES (.kaal)
-    @userbot.on_message(filters.command("kaal", prefixes=".") & filters.me)
-    async def kaal_mode(client, message):
-        try:
-            if len(message.command) < 2: text = "KAAL SHADOW"
-            else: text = message.text.split(maxsplit=1)[1]
-            
-            await message.edit("☠️ **KAAL** ☠️")
-            await asyncio.sleep(1)
-            styles = [
-                f"**{text}**", f"___{text}___", f"`{text}`", 
-                f"||{text}||", f"~~{text}~~", f"[{text}]", f"🔥 {text} 🔥"
-            ]
-            for style in styles:
-                await message.edit(style)
-                await asyncio.sleep(0.8)
-            await message.edit(f"👑 **{text}** 👑")
-        except: pass
 
     # 8. SELF DESTRUCT (.run)
     @userbot.on_message(filters.command("run", prefixes=".") & filters.me)
@@ -424,30 +419,6 @@ if userbot:
         await asyncio.sleep(0.5)
         await message.delete()
 
-    # 9. VIRUS (.virus)
-    @userbot.on_message(filters.command("virus", prefixes=".") & filters.me)
-    async def fake_virus(client, message):
-        if not message.reply_to_message: return
-        target = message.reply_to_message.from_user.first_name
-        await message.edit("⚠️ **SCANNING MESSAGE...**")
-        await asyncio.sleep(1)
-        await message.edit(f"☣️ **VIRUS DETECTED in {target}'s text!**")
-        await asyncio.sleep(1)
-        await message.edit("🗑️ **Quarantining User...**")
-
-    # 2. HACKER ALERT (.alert)
-    @userbot.on_message(filters.command("alert", prefixes=".") & filters.me)
-    async def hacker_alert(client, message):
-        try:
-            for i in range(7):
-                await message.edit("🔴 **WARNING: SYSTEM BREACH DETECTED!** 🔴\n💀 **HACKER IS HERE** 💀")
-                await asyncio.sleep(0.5)
-                await message.edit("⚫ **WARNING: SYSTEM BREACH DETECTED!** ⚫\n💀 **HACKER IS HERE** 💀")
-                await asyncio.sleep(0.5)
-            await message.edit("❌ **SYSTEM DESTROYED** ❌\n(Restart Required)")
-        except: pass
-
-
 # ==========================================
 #  ⬇️ NORMAL BOT HANDLERS ⬇️
 # ==========================================
@@ -455,9 +426,9 @@ if userbot:
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Bot Ready!**\nFiles bhejo.")
+        await message.reply_text("✅ **Bot Ready!** Files bhejo.")
     else:
-        await message.reply_text("🔒 **Locked!** Send Password. password nhi pta to admin se bat kro ( teligram id - @kaal_shadow )")
+        await message.reply_text(f"🔒 **Locked!** Send Password.\nAdmin: @kaal_shadow")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
@@ -467,18 +438,18 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Unlocked! password shi hai files bhejo **")
+            await message.reply_text("🔓 **Unlocked!** Password sahi hai.")
         else:
-            await message.reply_text("❌ Wrong Password. shi password dalo ya admin se bat kro ( teligram id - @kaal_shadow )")
+            await message.reply_text("❌ Wrong Password.")
         return
 
+    # Link Handling
     if "t.me/" in text or "telegram.me/" in text:
-        if not userbot: return await message.reply_text("❌ Userbot Missing.")
+        if not userbot: return await message.reply_text("❌ Userbot nahi hai, main link access nahi kar sakta.")
         try:
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
-            if parts[0] == "c": chat_id = int("-100" + parts[1])
-            else: chat_id = parts[0]
+            chat_id = int("-100" + parts[1]) if parts[0] == "c" else parts[0]
             msg_id = int(parts[-1].split("?")[0])
             
             target_msg = await userbot.get_messages(chat_id, msg_id)
@@ -494,7 +465,7 @@ async def handle_text(client, message):
                 queue_msg = await message.reply_text(f"🕒 **Added to Queue** (No. {q_pos})", quote=True)
                 await upload_queue.put( (client, message, media, m_type, target_msg, queue_msg) )
             else:
-                await message.reply_text("❌ Media not found.")
+                await message.reply_text("❌ Media nahi mila.")
         except Exception as e:
             await message.reply_text(f"❌ Error: {e}")
 
@@ -515,11 +486,19 @@ async def handle_file(client, message):
     await upload_queue.put( (client, message, media, m_type, None, queue_msg) )
 
 async def main():
+    print("🚀 Initializing Services...")
     threading.Thread(target=run_flask, daemon=True).start()
     asyncio.create_task(worker_processor())
+    
+    print("🤖 Starting Bot...")
     await bot.start()
-    if userbot: await userbot.start()
+    if userbot: 
+        print("👤 Starting Userbot...")
+        await userbot.start()
+    
+    print("✅ System Online!")
     await idle()
+    
     await bot.stop()
     if userbot: await userbot.stop()
 
