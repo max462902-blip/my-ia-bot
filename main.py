@@ -34,9 +34,9 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # --- CONFIG ---
-api_id = int(os.getenv("api_id"))
-api_hash = os.getenv("api_hash")
-bot_token = os.getenv("bot_token")
+api_id = int(os.getenv("API_ID"))
+api_hash = os.getenv("API_HASH")
+bot_token = os.getenv("BOT_TOKEN")
 HF_TOKEN = os.getenv("HF_TOKEN")
 HF_REPO = os.getenv("HF_REPO")
 SESSION_STRING = os.getenv("SESSION_STRING")
@@ -51,7 +51,7 @@ user_batches = {}
 user_queue_numbers = {}
 
 # --- CLIENTS ---
-bot = Client("main_bot_v2", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
+bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
 userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
 
 def get_readable_size(size):
