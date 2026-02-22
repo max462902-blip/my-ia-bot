@@ -217,55 +217,74 @@ async def process_queue_engine(client, message, tasks):
     else:
         await message.reply_text(final_text)
 
-# --- BOT COMMANDS ---
+# --- BOT COMMANDS & AUTHENTICATION ---
 
 @bot.on_message(filters.command("start") & filters.private)
-async def auth_handler(client, message):
-    args = message.text.split(" ", 1)
+async def start_handler(client, message):
     user_id = message.from_user.id
-    
-    if len(args) > 1 and args[1] == PASSWORD:
-        auth_users.add(user_id)
-        await message.reply_text("🔐 **Authorization Successful.**")
-    elif user_id in auth_users:
-        await message.reply_text("🔓 **Session Already Active.**")
+    if user_id in auth_users:
+        await message.reply_text("🔓 **Session Already Active.**\nLinks ya Files bhejo, main ready hoon.")
     else:
-        await message.reply_text("🚫 **ACCESS DENIED**")
+        await message.reply_text("🔒 **Protected System**\n\nAccess karne ke liye kripya **Password** likh kar bhejein.")
 
-@bot.on_message(filters.command("batch") & filters.user(list(auth_users)))
+@bot.on_message(filters.command("batch") & filters.private)
 async def start_batch(client, message):
     user_id = message.from_user.id
+    if user_id not in auth_users:
+        await message.reply_text("🚫 Pehle password bhej kar login karein.")
+        return
+        
     user_batch_mode[user_id] = True
     user_batches[user_id] = []
-    await message.reply_text("📦 **Batch Mode Enabled.** Send files/links. Send `/process` when done.")
+    await message.reply_text("📦 **Batch Mode Enabled.**\nFiles/Links bhejein. Jab ho jaye to `/process` dabayein.")
 
-@bot.on_message(filters.command("process") & filters.user(list(auth_users)))
+@bot.on_message(filters.command("process") & filters.private)
 async def execute_batch(client, message):
     user_id = message.from_user.id
+    if user_id not in auth_users:
+        return
+
     tasks = user_batches.get(user_id, [])
-    
     if not tasks:
         await message.reply_text("⚠️ **Queue Empty.**")
         return
     
     user_batch_mode[user_id] = False
     user_batches[user_id] = []
-    
     asyncio.create_task(process_queue_engine(client, message, tasks))
 
-@bot.on_message(filters.command("clear") & filters.user(list(auth_users)))
+@bot.on_message(filters.command("clear") & filters.private)
 async def clear_queue(client, message):
     user_id = message.from_user.id
-    user_batches[user_id] = []
-    await message.reply_text("🗑 **Queue Cleared.**")
+    if user_id in auth_users:
+        user_batches[user_id] = []
+        await message.reply_text("🗑 **Queue Cleared.**")
 
-@bot.on_message(filters.private & filters.user(list(auth_users)))
-async def content_handler(client, message):
-    if message.text and message.text.startswith("/"): return 
+# --- SMART MESSAGE HANDLER (Password + Content) ---
+
+@bot.on_message(filters.private)
+async def smart_handler(client, message):
+    # 1. Ignore other commands
+    if message.text and message.text.startswith("/"):
+        return 
 
     user_id = message.from_user.id
+    text = message.text.strip() if message.text else ""
+
+    # --- STEP 1: CHECK LOGIN ---
+    if user_id not in auth_users:
+        # Agar user logged in nahi hai, to check karo kya usne password bheja hai?
+        if text == PASSWORD:
+            auth_users.add(user_id)
+            await message.reply_text("✅ **Access Granted!**\n\nAb aap Links ya Files bhej sakte hain.")
+        else:
+            await message.reply_text("❌ **Ghalat Password.**\nDobara koshish karein ya sahi password dalein.")
+        return  # Yahi ruk jao, aage file process mat karo
+
+    # --- STEP 2: PROCESS CONTENT (Agar User Logged In Hai) ---
     task = None
     
+    # A. Detect Direct Files
     if message.media:
         name = "File"
         if message.document: name = message.document.file_name or "Document"
@@ -276,12 +295,13 @@ async def content_handler(client, message):
             "data": {"message_obj": message, "name": name}
         }
 
-    elif message.text:
-        text = message.text
+    # B. Detect Text Links
+    elif text:
         if "youtube.com" in text or "youtu.be" in text:
             task = {"type": "youtube", "data": {"url": text}}
         
         elif "t.me/" in text:
+            # Telegram Link Patterns
             pvt_pattern = re.search(r"t\.me/c/(\d+)/(\d+)(?:/(\d+))?", text)
             pub_pattern = re.search(r"t\.me/([a-zA-Z0-9_]+)/(\d+)", text)
             
@@ -292,12 +312,18 @@ async def content_handler(client, message):
             elif pub_pattern:
                 task = {"type": "link", "data": {"chat_id": pub_pattern.group(1), "msg_id": int(pub_pattern.group(2)), "is_private": False}}
 
+    # --- ACTION ---
     if task:
         if user_batch_mode.get(user_id):
             user_batches[user_id].append(task)
             await message.reply_text(f"➕ **Queued** (Total: {len(user_batches[user_id])})", quote=True)
         else:
+            # Single Mode
             asyncio.create_task(process_queue_engine(client, message, [task]))
+    else:
+        # Agar na password tha, na link, na file
+        if not user_batch_mode.get(user_id):
+            await message.reply_text("❓ Kuch samajh nahi aaya. Link ya File bhejein.")
 
 # --- MAIN EXECUTION ---
 async def main():
