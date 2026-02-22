@@ -95,15 +95,15 @@ async def process_queue_engine(client, message, tasks):
     total = len(tasks)
     completed_links = []
     
-    # Create a unique folder for this batch to prevent collision
+    # Create a unique folder for this batch
     batch_id = uuid.uuid4().hex
     batch_folder = f"downloads/{batch_id}"
     os.makedirs(batch_folder, exist_ok=True)
     
+    # Initial Status Message
     status_msg = await message.reply_text(
-        f"🔄 **Processing Batch...**\n"
-        f"📁 Total Files: `{total}`\n"
-        f"📡 Status: `Connecting to Cloud...`"
+        f"⏳ **Initializing...**\n"
+        f"📁 Files: `{total}`"
     )
     
     try:
@@ -117,10 +117,12 @@ async def process_queue_engine(client, message, tasks):
             media_type = "document"
 
             try:
-                # --- 1. DOWNLOAD PHASE ---
+                # --- STEP 1: DOWNLOADING ---
+                display_name_temp = data.get('name', 'File')
                 await status_msg.edit(
-                    f"📥 **Task {current_num}/{total}**\n"
-                    f"💾 Fetching: `{data.get('name', 'File')}`"
+                    f"⬇️ **Downloading ({current_num}/{total})**\n"
+                    f"📄 Name: `{display_name_temp}`\n"
+                    f"🚀 Please Wait..."
                 )
 
                 if task_type in ["direct_media", "link"]:
@@ -139,7 +141,7 @@ async def process_queue_engine(client, message, tasks):
                             if user_bot: msg = await user_bot.get_messages(chat_id, msg_id)
                         
                         if not msg or not msg.media:
-                            raise Exception("Media not found/accessible.")
+                            raise Exception("Media not found.")
                         
                         if msg.document: 
                             display_name = msg.document.file_name or "Document"
@@ -154,7 +156,7 @@ async def process_queue_engine(client, message, tasks):
                             display_name = "Image"
                             media_type = "photo"
 
-                    # Download to batch specific folder
+                    # Download
                     downloader = user_bot if user_bot else client
                     temp_filename = f"temp_{uuid.uuid4().hex}"
                     local_path = await downloader.download_media(msg, file_name=f"{batch_folder}/{temp_filename}")
@@ -165,20 +167,22 @@ async def process_queue_engine(client, message, tasks):
                     display_name = yt_title
                     media_type = "video"
 
-                # --- 2. RENAME & UPLOAD PHASE ---
+                # --- STEP 2: CHECKING FILE & RENAMING ---
                 if not local_path or not os.path.exists(local_path):
-                    raise Exception("Download failed (File not found).")
+                    raise Exception("Download failed.")
 
                 secure_name = get_secure_filename(display_name if task_type != "youtube" else local_path, media_type)
-                # Keep file in batch folder, just rename
                 final_path = os.path.join(batch_folder, secure_name)
                 os.rename(local_path, final_path)
 
-                file_size_mb = os.path.getsize(final_path) / (1024 * 1024)
-                
+                # Get Size Correctly
+                file_size_bytes = os.path.getsize(final_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+
+                # --- STEP 3: UPLOADING ---
                 await status_msg.edit(
-                    f"📤 **Task {current_num}/{total}**\n"
-                    f"☁️ Uploading: `{secure_name}`\n"
+                    f"☁️ **Uploading ({current_num}/{total})**\n"
+                    f"📄 Name: `{display_name}`\n"
                     f"📦 Size: `{file_size_mb:.2f} MB`"
                 )
 
@@ -191,31 +195,48 @@ async def process_queue_engine(client, message, tasks):
                     repo_type="dataset"
                 )
 
+                # Cleanup Local File
                 if os.path.exists(final_path):
                     os.remove(final_path)
 
+                # Generate Link & Format
                 final_link = f"{SITE_URL}/file/{secure_name}"
-                completed_links.append(f"📄 **{display_name}**\n`{final_link}`")
+                
+                # --- FORMATTING THE LIST ENTRY ---
+                # Yahan Gap aur Size add kiya hai
+                entry = (
+                    f"📂 **{display_name}**\n"
+                    f"📦 Size: `{file_size_mb:.2f} MB`\n"
+                    f"🔗 {final_link}"
+                )
+                completed_links.append(entry)
 
             except Exception as e:
-                print(f"Error processing file: {e}")
-                completed_links.append(f"❌ **Error:** {display_name}\n`{str(e)[:30]}`")
+                print(f"Error: {e}")
+                completed_links.append(f"❌ **Error:** {display_name}\n⚠️ `{str(e)[:40]}`")
 
     finally:
-        # --- CLEANUP BATCH FOLDER ---
         if os.path.exists(batch_folder):
             shutil.rmtree(batch_folder)
 
-    # --- FINAL DELIVERY ---
-    final_text = "✅ **Cloud Upload Complete**\n\n" + "\n\n".join(completed_links)
+    # --- STEP 4: DELETE STATUS & SEND FINAL LIST ---
+    
+    # Purana "Uploading..." wala message delete kar do
+    try:
+        await status_msg.delete()
+    except:
+        pass
+
+    # Final Result bhejo
+    final_text = "**✅ Cloud Upload Complete**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
     
     if len(final_text) > 4000:
         with open("Direct_Links.txt", "w", encoding="utf-8") as f:
             f.write(final_text.replace("**", "").replace("`", ""))
-        await message.reply_document("Direct_Links.txt", caption="✅ **Task Completed.** Links file mein hain.")
+        await message.reply_document("Direct_Links.txt", caption="✅ **Task Completed.** (Links file mein hain)")
         os.remove("Direct_Links.txt")
     else:
-        await message.reply_text(final_text)
+        await message.reply_text(final_text, disable_web_page_preview=True)
 
 # --- BOT COMMANDS & AUTHENTICATION ---
 
