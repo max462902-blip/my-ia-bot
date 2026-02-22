@@ -1,35 +1,18 @@
 import os
-import uuid
+import asyncio
 import threading
 import logging
-import asyncio
-import time
-import re
-import random
-from datetime import datetime
-from flask import Flask, redirect
-from pyrogram import Client, filters, idle, enums
-from huggingface_hub import HfApi
-from dotenv import load_dotenv
+from flask import Flask
+from pyrogram import Client, filters, idle
 
 # --- SETUP ---
-load_dotenv()
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.INFO) # INFO level taaki sab dikhe
+logger = logging.getLogger(__name__)
 
-# --- SERVER KEEPER (Render Health Check) ---
 app = Flask(__name__)
-SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): 
-    return "Bot is Running! Made by Kaal"
-
-@app.route('/file/<path:filename>')
-def file_redirect(filename):
-    hf_repo = os.environ.get("HF_REPO")
-    if not hf_repo: return "HF_REPO not set", 404
-    real_url = f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}?download=true"
-    return redirect(real_url, code=302)
+def home(): return "Bot is Alive!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -39,55 +22,55 @@ def run_flask():
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-HF_TOKEN = os.environ.get("HF_TOKEN", "")
-HF_REPO = os.environ.get("HF_REPO", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", None)
 ACCESS_PASSWORD = os.environ.get("ACCESS_PASSWORD", "kp_2324")
 
 AUTH_USERS = set()
-upload_queue = asyncio.Queue()
-user_batches = {}
 
 # --- CLIENTS ---
-bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
-userbot = None
-if SESSION_STRING:
-    userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4)
+bot = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-def get_readable_size(size):
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024: return f"{size:.2f} {unit}"
-        size /= 1024
-    return "Unknown"
+# --- HANDLERS ---
 
-# --- WORKER ---
-async def worker_processor():
-    print("👷 Worker started...")
-    while True:
-        task = await upload_queue.get()
-        client, message, media, media_type, original_msg = task
-        user_id = message.chat.id
-        local_path = None
-        status_msg = None
+@bot.on_message(filters.command("start"))
+async def start_handler(client, message):
+    logger.info(f"Start command received from {message.from_user.id}")
+    await message.reply_text("✅ Bot Online hai bhai!\n🔒 Password bhejo unlock karne ke liye.")
+
+@bot.on_message(filters.text & filters.private)
+async def auth_handler(client, message):
+    user_id = message.from_user.id
+    logger.info(f"Message received: {message.text} from {user_id}")
+    
+    if user_id not in AUTH_USERS:
+        if message.text.strip() == ACCESS_PASSWORD:
+            AUTH_USERS.add(user_id)
+            await message.reply_text("🔓 Bot Unlocked! Ab files bhejo.")
+        else:
+            await message.reply_text("❌ Galat Password.")
+
+async def start_services():
+    logger.info("Starting Flask...")
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    logger.info("Starting Bot...")
+    await bot.start()
+    
+    # Agar session string galat hai to bot yahan nahi phansega
+    if SESSION_STRING:
         try:
-            file_name = getattr(media, "file_name", f"file_{int(time.time())}.{media_type}")
-            unique_id = uuid.uuid4().hex[:6]
-            ext = os.path.splitext(file_name)[1] or (".mp4" if media_type=="video" else ".jpg")
-            final_filename = f"file_{unique_id}{ext}"
+            logger.info("Starting Userbot...")
+            user_bot = Client("my_userbot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
+            await user_bot.start()
+            logger.info("Userbot Started!")
+        except Exception as e:
+            logger.error(f"Userbot error (Shayad Session String expired hai): {e}")
 
-            status_msg = await message.reply_text(f"⏳ **Processing:** `{file_name}`")
-            if not os.path.exists("downloads"): os.makedirs("downloads")
-            local_path = f"downloads/{final_filename}"
-            
-            await status_msg.edit("⬇️ **Downloading...**")
-            if original_msg: await original_msg.download(file_name=local_path)
-            else: await message.download(file_name=local_path)
+    logger.info("✅ SYSTEM FULLY ONLINE!")
+    await idle()
 
-            file_size = get_readable_size(os.path.getsize(local_path))
-            await status_msg.edit("⬆️ **Uploading to HF...**")
-            
-            api = HfApi(token=HF_TOKEN)
-            await asyncio.to_thread(api.upload_file, path_or_fileobj=local_path, path_in_repo=final_filename, repo_id=HF_REPO, repo_type="dataset")
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(start_services())            await asyncio.to_thread(api.upload_file, path_or_fileobj=local_path, path_in_repo=final_filename, repo_id=HF_REPO, repo_type="dataset")
 
             final_link = f"{SITE_URL}/file/{final_filename}"
             if user_id not in user_batches: user_batches[user_id] = []
