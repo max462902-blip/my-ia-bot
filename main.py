@@ -95,15 +95,15 @@ async def process_queue_engine(client, message, tasks):
     total = len(tasks)
     completed_links = []
     
-    # Create a unique folder for this batch
+    # Batch folder setup
     batch_id = uuid.uuid4().hex
     batch_folder = f"downloads/{batch_id}"
     os.makedirs(batch_folder, exist_ok=True)
     
-    # Initial Status Message
+    # Status Message
     status_msg = await message.reply_text(
-        f"⏳ **Initializing...**\n"
-        f"📁 Files: `{total}`"
+        f"⏳ **Starting Task...**\n"
+        f"📂 Files: `{total}`"
     )
     
     try:
@@ -112,17 +112,22 @@ async def process_queue_engine(client, message, tasks):
             data = task['data']
             task_type = task['type']
             
+            # Variables Reset
             local_path = None
-            display_name = "Unknown Content"
+            final_path = None
+            display_name = "Unknown File"
+            file_size_mb = 0.0
             media_type = "document"
 
             try:
                 # --- STEP 1: DOWNLOADING ---
-                display_name_temp = data.get('name', 'File')
+                temp_name = data.get('name', 'File')
+                
+                # Update Status: Downloading
                 await status_msg.edit(
-                    f"⬇️ **Downloading ({current_num}/{total})**\n"
-                    f"📄 Name: `{display_name_temp}`\n"
-                    f"🚀 Please Wait..."
+                    f"⬇️ **Downloading ({current_num}/{total})**\n\n"
+                    f"📄 File: `{temp_name}`\n"
+                    f"⚡ Please Wait..."
                 )
 
                 if task_type in ["direct_media", "link"]:
@@ -167,7 +172,7 @@ async def process_queue_engine(client, message, tasks):
                     display_name = yt_title
                     media_type = "video"
 
-                # --- STEP 2: CHECKING FILE & RENAMING ---
+                # --- STEP 2: PROCESSING ---
                 if not local_path or not os.path.exists(local_path):
                     raise Exception("Download failed.")
 
@@ -175,15 +180,17 @@ async def process_queue_engine(client, message, tasks):
                 final_path = os.path.join(batch_folder, secure_name)
                 os.rename(local_path, final_path)
 
-                # Get Size Correctly
-                file_size_bytes = os.path.getsize(final_path)
-                file_size_mb = file_size_bytes / (1024 * 1024)
+                # Size Calculation
+                if os.path.exists(final_path):
+                    file_size_bytes = os.path.getsize(final_path)
+                    file_size_mb = file_size_bytes / (1024 * 1024)
 
                 # --- STEP 3: UPLOADING ---
                 await status_msg.edit(
-                    f"☁️ **Uploading ({current_num}/{total})**\n"
-                    f"📄 Name: `{display_name}`\n"
-                    f"📦 Size: `{file_size_mb:.2f} MB`"
+                    f"☁️ **Uploading ({current_num}/{total})**\n\n"
+                    f"📄 File: `{display_name}`\n"
+                    f"📦 Size: `{file_size_mb:.2f} MB`\n"
+                    f"🚀 Sending to Cloud..."
                 )
 
                 api = HfApi(token=HF_TOKEN)
@@ -195,45 +202,38 @@ async def process_queue_engine(client, message, tasks):
                     repo_type="dataset"
                 )
 
-                # Cleanup Local File
-                if os.path.exists(final_path):
-                    os.remove(final_path)
-
-                # Generate Link & Format
                 final_link = f"{SITE_URL}/file/{secure_name}"
                 
-                # --- FORMATTING THE LIST ENTRY ---
-                # Yahan Gap aur Size add kiya hai
+                # ✅ TOUCH TO COPY FORMAT
+                # `backticks` lagane se Telegram isko copy-box bana deta hai
                 entry = (
                     f"📂 **{display_name}**\n"
-                    f"📦 Size: `{file_size_mb:.2f} MB`\n"
-                    f"🔗 {final_link}"
+                    f"📦 Size: {file_size_mb:.2f} MB\n"
+                    f"🔗 `{final_link}`"
                 )
                 completed_links.append(entry)
 
             except Exception as e:
                 print(f"Error: {e}")
-                completed_links.append(f"❌ **Error:** {display_name}\n⚠️ `{str(e)[:40]}`")
+                completed_links.append(f"❌ **Error:** {display_name}\n⚠️ `{str(e)[:50]}`")
+
+            finally:
+                if final_path and os.path.exists(final_path): os.remove(final_path)
+                if local_path and os.path.exists(local_path): os.remove(local_path)
 
     finally:
-        if os.path.exists(batch_folder):
-            shutil.rmtree(batch_folder)
+        if os.path.exists(batch_folder): shutil.rmtree(batch_folder)
+        try: await status_msg.delete()
+        except: pass
 
-    # --- STEP 4: DELETE STATUS & SEND FINAL LIST ---
-    
-    # Purana "Uploading..." wala message delete kar do
-    try:
-        await status_msg.delete()
-    except:
-        pass
-
-    # Final Result bhejo
-    final_text = "**✅ Cloud Upload Complete**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
+    # --- FINAL LIST ---
+    # Beech mein line ka gap taki saaf dikhe
+    final_text = "**✅ Batch Completed**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
     
     if len(final_text) > 4000:
         with open("Direct_Links.txt", "w", encoding="utf-8") as f:
             f.write(final_text.replace("**", "").replace("`", ""))
-        await message.reply_document("Direct_Links.txt", caption="✅ **Task Completed.** (Links file mein hain)")
+        await message.reply_document("Direct_Links.txt", caption="✅ **Links File Ready**")
         os.remove("Direct_Links.txt")
     else:
         await message.reply_text(final_text, disable_web_page_preview=True)
