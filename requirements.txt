@@ -1,3 +1,4 @@
 pyTelegramBotAPI
 flask
 requests
+huggingface_hub
