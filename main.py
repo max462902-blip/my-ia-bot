@@ -91,131 +91,150 @@ def download_youtube_secure(url, output_folder):
 
 # --- PROCESSING ENGINE ---
 
-async def worker_processor():
-    print("👷 Worker started...")
-    while True:
-        # Task nikalo
-        task = await upload_queue.get()
-        client, message, media, media_type, original_msg, queue_msg = task
-        user_id = message.chat.id
-        
-        local_path = None
-        status_msg = None
-        
-        try:
-            # 1. PURANA "Added to Queue" DELETE KARO
-            if queue_msg:
-                try: await queue_msg.delete()
-                except: pass
+async def process_queue_engine(client, message, tasks):
+    total = len(tasks)
+    completed_links = []
+    
+    # Batch Setup
+    batch_id = uuid.uuid4().hex
+    batch_folder = f"downloads/{batch_id}"
+    os.makedirs(batch_folder, exist_ok=True)
+    
+    # 1. Single Status Message (Yehi update hota rahega)
+    status_msg = await message.reply_text(
+        f"â³ **Starting Queue...**\n"
+        f"ðŸ“Š Total Files: `{total}`"
+    )
+    
+    try:
+        for index, task in enumerate(tasks):
+            current_num = index + 1
+            data = task['data']
+            task_type = task['type']
+            
+            # Reset Variables
+            local_path = None
+            final_path = None
+            display_name = data.get('name', 'Unknown File')
+            file_size_mb = 0.0
+            media_type = "document"
 
-            # 2. EXACT ORIGINAL NAME LOGIC (Improved)
-            original_display_name = None
-            
-            # Pehle koshish: File ke attribute se naam nikalo
-            if hasattr(media, "file_name") and media.file_name:
-                original_display_name = media.file_name
-            
-            # Dusri koshish: Agar file name nahi hai, to Caption se banao
-            if not original_display_name:
-                caption = message.caption or (original_msg.caption if original_msg else "")
-                if caption:
-                    # Caption ki pehli line lo, max 50 words, aur safe banao
-                    clean_cap = re.sub(r'[\\/*?:"<>|]', "", caption.split('\n')[0])[:60]
-                    ext = ".mp4" if media_type == "video" else ".pdf"
-                    if media_type == "photo": ext = ".jpg"
-                    original_display_name = f"{clean_cap}{ext}"
-            
-            # Teesri koshish: Agar caption bhi nahi hai
-            if not original_display_name:
-                original_display_name = f"File_{int(time.time())}.{media_type}"
+            try:
+                # --- STEP 1: DOWNLOADING ---
+                # Message Edit karein (Naya message nahi bhejenge)
+                await status_msg.edit(
+                    f"â¬‡ï¸ **Downloading ({current_num}/{total})**\n\n"
+                    f"ðŸ“‚ File: `{display_name}`\n"
+                    f"âš¡ Please Wait..."
+                )
 
-            # 3. UNIQUE SYSTEM NAME (HF Upload ke liye)
-            unique_id = uuid.uuid4().hex[:6]
-            ext = os.path.splitext(original_display_name)[1]
-            if not ext: 
-                if media_type == "video": ext = ".mp4"
-                elif media_type == "photo": ext = ".jpg"
-                else: ext = ".pdf"
-            
-            final_filename = f"file_{unique_id}{ext}"
+                # ... (Download Logic Same as Before) ...
+                if task_type in ["direct_media", "link"]:
+                    msg = None
+                    if task_type == "direct_media":
+                        msg = data['message_obj']
+                        display_name = data['name']
+                    elif task_type == "link":
+                        chat_id = data['chat_id']
+                        msg_id = data['msg_id']
+                        fetcher = user_bot if (data['is_private'] and user_bot) else client
+                        
+                        try:
+                            msg = await fetcher.get_messages(chat_id, msg_id)
+                        except:
+                            if user_bot: msg = await user_bot.get_messages(chat_id, msg_id)
+                        
+                        if not msg or not msg.media: raise Exception("Media not found.")
+                        
+                        if msg.document: 
+                            display_name = msg.document.file_name or "Document"
+                            media_type = "document"
+                        elif msg.video: 
+                            display_name = "Video File"
+                            media_type = "video"
+                        elif msg.audio: 
+                            display_name = "Audio File"
+                            media_type = "audio"
+                        elif msg.photo: 
+                            display_name = "Image"
+                            media_type = "photo"
 
-            # 4. PROCESSING STATUS
-            status_msg = await message.reply_text(f"⏳ **Processing:**\n`{original_display_name}`")
-            
-            # 5. DOWNLOAD
-            if not os.path.exists("downloads"): os.makedirs("downloads")
-            local_path = f"downloads/{final_filename}"
-            
-            await status_msg.edit(f"⬇️ **Downloading...**\n`{original_display_name}`")
-            
-            if original_msg:
-                await original_msg.download(file_name=local_path)
-            else:
-                await message.download(file_name=local_path)
+                    downloader = user_bot if user_bot else client
+                    temp_filename = f"temp_{uuid.uuid4().hex}"
+                    local_path = await downloader.download_media(msg, file_name=f"{batch_folder}/{temp_filename}")
 
-            file_size = get_readable_size(os.path.getsize(local_path))
+                elif task_type == "youtube":
+                    local_path, yt_title = await asyncio.to_thread(download_youtube_secure, data['url'], batch_folder)
+                    if not local_path: raise Exception("YT Download Error")
+                    display_name = yt_title
+                    media_type = "video"
 
-            # 6. UPLOAD
-            await status_msg.edit(f"⬆️ **Uploading...**\n`{original_display_name}`")
-            api = HfApi(token=HF_TOKEN)
-            
-            await asyncio.to_thread(
-                api.upload_file,
-                path_or_fileobj=local_path,
-                path_in_repo=final_filename,
-                repo_id=HF_REPO,
-                repo_type="dataset"
-            )
+                # --- STEP 2: SIZE CHECK & RENAMING ---
+                if not local_path or not os.path.exists(local_path):
+                    raise Exception("Download failed.")
 
-            # 7. SAVE DATA FOR LIST
-            final_link = f"{SITE_URL}/file/{final_filename}"
-            
-            if user_id not in user_batches: user_batches[user_id] = []
-            
-            user_batches[user_id].append({
-                "display_name": original_display_name,
-                "link": final_link,
-                "size": file_size
-            })
+                secure_name = get_secure_filename(display_name if task_type != "youtube" else local_path, media_type)
+                final_path = os.path.join(batch_folder, secure_name)
+                os.rename(local_path, final_path)
 
-            # 8. DELETE STATUS MSG
-            await status_msg.delete()
+                # âœ… Accurate Size Calculation
+                if os.path.exists(final_path):
+                    file_size_bytes = os.path.getsize(final_path)
+                    file_size_mb = file_size_bytes / (1024 * 1024)
+                
+                # --- STEP 3: UPLOADING ---
+                # Message Edit (Ab Uploading dikhayega)
+                await status_msg.edit(
+                    f"â˜ï¸ **Uploading ({current_num}/{total})**\n\n"
+                    f"ðŸ“‚ File: `{display_name}`\n"
+                    f"ðŸ“¦ Size: `{file_size_mb:.2f} MB`\n"
+                    f"ðŸš€ Sending to Cloud..."
+                )
 
-        except Exception as e:
-            if status_msg: await status_msg.edit(f"❌ Error: {str(e)}")
-            logging.error(f"Error: {e}")
-        
-        finally:
-            if local_path and os.path.exists(local_path):
-                os.remove(local_path)
-            upload_queue.task_done()
+                api = HfApi(token=HF_TOKEN)
+                await asyncio.to_thread(
+                    api.upload_file,
+                    path_or_fileobj=final_path,
+                    path_in_repo=secure_name,
+                    repo_id=HF_REPO,
+                    repo_type="dataset"
+                )
 
-        # --- FINAL LIST CHECK ---
-        if upload_queue.empty():
-            await asyncio.sleep(2)
-            if upload_queue.empty() and user_id in user_batches and user_batches[user_id]:
-                data = user_batches[user_id]
-                
-                final_text = f"✅ **BATCH COMPLETED ({len(data)} Files)**\n\n"
-                
-                for item in data:
-                    final_text += f"📂 **{item['display_name']}**\n"
-                    final_text += f"`{item['link']}`\n"
-                    final_text += f"📦 {item['size']}\n\n"
-                
-                final_text += "⚡ **All files processed!**"
-                
-                try:
-                    if len(final_text) > 4000:
-                        parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
-                        for part in parts: await client.send_message(user_id, part)
-                    else:
-                        await client.send_message(user_id, final_text)
-                except: pass
-                
-                # Cleanup Lists
-                del user_batches[user_id]
-                if user_id in user_queue_numbers: del user_queue_numbers[user_id]
+                final_link = f"{SITE_URL}/file/{secure_name}"
+                
+                # âœ… NEW FORMAT (Link Beech mein, Size Niche)
+                entry = (
+                    f"ðŸ“‚ **{display_name}**\n"
+                    f"ðŸ”— `{final_link}`\n"
+                    f"ðŸ“¦ Size: {file_size_mb:.2f} MB"
+                )
+                completed_links.append(entry)
+
+            except Exception as e:
+                print(f"Error: {e}")
+                completed_links.append(f"âŒ **Error:** {display_name}\nâš ï¸ `{str(e)[:50]}`")
+
+            finally:
+                if final_path and os.path.exists(final_path): os.remove(final_path)
+                if local_path and os.path.exists(local_path): os.remove(local_path)
+
+    finally:
+        if os.path.exists(batch_folder): shutil.rmtree(batch_folder)
+        
+        # âœ… Status Message Delete (Kaam khatam hote hi)
+        try: await status_msg.delete()
+        except: pass
+
+    # --- FINAL DELIVERY (Ek Saath) ---
+    final_text = "**âœ… Batch Completed**\n\n" + "\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\n".join(completed_links)
+    
+    if len(final_text) > 4000:
+        with open("Direct_Links.txt", "w", encoding="utf-8") as f:
+            f.write(final_text.replace("**", "").replace("`", ""))
+        await message.reply_document("Direct_Links.txt", caption="âœ… **All Links Ready**")
+        os.remove("Direct_Links.txt")
+    else:
+        await message.reply_text(final_text, disable_web_page_preview=True)
 
 # --- BOT COMMANDS & AUTHENTICATION ---
 
