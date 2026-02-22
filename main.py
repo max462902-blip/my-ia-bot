@@ -351,17 +351,32 @@ async def content_handler(client, message):
 
 # --- MAIN EXECUTION ---
 async def main():
+    global user_bot # Global variable ko access karne ke liye
+    
     clean_downloads()
+    
+    # Flask Server start
     threading.Thread(target=run_flask, daemon=True).start()
     
-    print("🔥 Bot Started in Stealth Mode")
-    if user_bot: await user_bot.start()
-    await bot.start()
-    await idle()
-    await bot.stop()
-    if user_bot: await user_bot.stop()
+    print("🚀 Initializing Bot...")
 
-if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    # --- USER BOT START (Safe Mode) ---
+    if user_bot:
+        try:
+            await user_bot.start()
+            print("✅ User Session Started Successfully!")
+        except Exception as e:
+            print(f"⚠️ User Session Failed (Expired/Invalid): {e}")
+            print("❌ Private Links will NOT work until you update SESSION_STRING.")
+            user_bot = None # User bot ko disable kar do taki aage error na aaye
+
+    # --- MAIN BOT START ---
+    try:
+        await bot.start()
+        print("🔥 Bot Started in Stealth Mode! (Ready to accept files)")
+        await idle()
+    except Exception as e:
+        print(f"❌ Main Bot Error: {e}")
+    finally:
+        if user_bot: await user_bot.stop()
+        await bot.stop()
