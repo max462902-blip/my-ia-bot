@@ -307,3 +307,42 @@ async def main():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
+
+async def main():
+    # 1. Purana Data Saaf Karo
+    clean_trash()
+    
+    # 2. Flask Server Start
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # 3. Bots Start
+    print("🤖 Bot Starting...")
+    await bot.start()
+    print("✅ Main Bot Started")
+    
+    # --- USERBOT SAFETY CHECK ---
+    if userbot: 
+        try:
+            print("🔄 Starting Userbot...")
+            await userbot.start()
+            print("✅ Userbot Started Successfully")
+        except Exception as e:
+            print(f"⚠️ Userbot Start Failed: {e}")
+            print("❌ Userbot features (Restricted Link download) kaam nahi karenge, par Main Bot chalega.")
+            # Yahan hum userbot ko None kar dete hain taaki aage code crash na ho
+            global userbot
+            userbot = None 
+    
+    # 4. Worker Start
+    asyncio.create_task(worker_processor())
+    
+    # 5. Keep Alive
+    await idle()
+    
+    # 6. Stop
+    await bot.stop()
+    if userbot: await userbot.stop()
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
