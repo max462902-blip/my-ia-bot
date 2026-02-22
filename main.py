@@ -10,13 +10,18 @@ from pyrogram import Client, filters, idle
 from huggingface_hub import HfApi
 from dotenv import load_dotenv
 
+# --- DEBUG MODE ON ---
+print("🚀 Starting bot...")
+print(f"Python version: {os.sys.version}")
+print(f"Current directory: {os.getcwd()}")
+
 # --- SETUP ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-# --- SERVER KEEPER (Fixed) ---
+# --- SERVER KEEPER ---
 app = Flask(__name__)
-SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://your-app.onrender.com")
+SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:10000")
 
 @app.route('/')
 def home(): 
@@ -29,16 +34,25 @@ def file_redirect(filename):
     return redirect(real_url, code=302)
 
 def run_flask():
-    port = int(os.environ.get("PORT", 10000))  # Render usually uses 10000
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🔥 Flask starting on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # --- CONFIG ---
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_REPO = os.getenv("HF_REPO")
-SESSION_STRING = os.getenv("SESSION_STRING")
+print("📥 Loading environment variables...")
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+HF_REPO = os.getenv("HF_REPO", "")
+SESSION_STRING = os.getenv("SESSION_STRING", "")
+
+print(f"✅ API_ID: {'✅' if API_ID else '❌'}")
+print(f"✅ API_HASH: {'✅' if API_HASH else '❌'}")
+print(f"✅ BOT_TOKEN: {'✅' if BOT_TOKEN else '❌'}")
+print(f"✅ HF_TOKEN: {'✅' if HF_TOKEN else '❌'}")
+print(f"✅ HF_REPO: {'✅' if HF_REPO else '❌'}")
+print(f"✅ SESSION_STRING: {'✅' if SESSION_STRING else '❌'}")
 
 # --- SECURITY ---
 ACCESS_PASSWORD = "kp_2324"
@@ -49,9 +63,13 @@ upload_queue = asyncio.Queue()
 user_batches = {}
 user_queue_numbers = {}
 
+print("🤖 Creating bot client...")
 # --- CLIENTS ---
 bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
 userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
+
+print(f"✅ Bot created: {bot}")
+print(f"✅ Userbot created: {userbot}")
 
 def get_readable_size(size):
     try:
@@ -64,11 +82,13 @@ def get_readable_size(size):
 
 # --- WORKER PROCESSOR ---
 async def worker_processor():
-    print("👷 Worker started...")
+    print("👷 Worker processor started...")
     while True:
         try:
-            # Task nikalo
+            print("👷 Waiting for queue...")
             task = await upload_queue.get()
+            print(f"👷 Got task: {task}")
+            
             client, message, media, media_type, original_msg, queue_msg = task
             user_id = message.chat.id
             
@@ -76,19 +96,15 @@ async def worker_processor():
             status_msg = None
             
             try:
-                # 1. PURANA "Added to Queue" DELETE KARO
                 if queue_msg:
                     try: await queue_msg.delete()
                     except: pass
 
-                # 2. EXACT ORIGINAL NAME LOGIC
                 original_display_name = None
                 
-                # Pehle koshish: File ke attribute se naam nikalo
                 if hasattr(media, "file_name") and media.file_name:
                     original_display_name = media.file_name
                 
-                # Dusri koshish: Agar file name nahi hai, to Caption se banao
                 if not original_display_name:
                     caption = message.caption or (original_msg.caption if original_msg else "")
                     if caption:
@@ -97,11 +113,9 @@ async def worker_processor():
                         if media_type == "photo": ext = ".jpg"
                         original_display_name = f"{clean_cap}{ext}"
                 
-                # Teesri koshish: Default name
                 if not original_display_name:
                     original_display_name = f"File_{int(time.time())}.{media_type}"
 
-                # 3. UNIQUE SYSTEM NAME
                 unique_id = uuid.uuid4().hex[:6]
                 ext = os.path.splitext(original_display_name)[1]
                 if not ext: 
@@ -111,24 +125,26 @@ async def worker_processor():
                 
                 final_filename = f"file_{unique_id}{ext}"
 
-                # 4. PROCESSING STATUS
-                status_msg = await message.reply_text(f"⏳ **Processing:**\n`{original_display_name}`")
+                status_msg = await message.reply_text(f"⏳ Processing: `{original_display_name}`")
                 
-                # 5. DOWNLOAD
                 if not os.path.exists("downloads"): os.makedirs("downloads")
                 local_path = f"downloads/{final_filename}"
                 
-                await status_msg.edit(f"⬇️ **Downloading...**\n`{original_display_name}`")
+                await status_msg.edit(f"⬇️ Downloading... `{original_display_name}`")
                 
+                print(f"📥 Downloading to: {local_path}")
                 if original_msg:
                     await original_msg.download(file_name=local_path)
                 else:
                     await message.download(file_name=local_path)
+                
+                print(f"✅ Downloaded: {local_path}")
 
                 file_size = get_readable_size(os.path.getsize(local_path))
 
-                # 6. UPLOAD
-                await status_msg.edit(f"⬆️ **Uploading...**\n`{original_display_name}`")
+                await status_msg.edit(f"⬆️ Uploading... `{original_display_name}`")
+                print(f"⬆️ Uploading to HF: {final_filename}")
+                
                 api = HfApi(token=HF_TOKEN)
                 
                 await asyncio.to_thread(
@@ -138,8 +154,9 @@ async def worker_processor():
                     repo_id=HF_REPO,
                     repo_type="dataset"
                 )
+                
+                print(f"✅ Uploaded: {final_filename}")
 
-                # 7. SAVE DATA FOR LIST
                 final_link = f"{SITE_URL}/file/{final_filename}"
                 
                 if user_id not in user_batches: 
@@ -151,10 +168,10 @@ async def worker_processor():
                     "size": file_size
                 })
 
-                # 8. DELETE STATUS MSG
                 await status_msg.delete()
 
             except Exception as e:
+                print(f"❌ Processing error: {e}")
                 if status_msg: 
                     await status_msg.edit(f"❌ Error: {str(e)}")
                 logging.error(f"Error: {e}")
@@ -162,41 +179,11 @@ async def worker_processor():
             finally:
                 if local_path and os.path.exists(local_path):
                     os.remove(local_path)
+                    print(f"🗑️ Deleted: {local_path}")
                 upload_queue.task_done()
 
-            # --- FINAL LIST CHECK ---
-            if upload_queue.empty():
-                await asyncio.sleep(2)
-                if upload_queue.empty() and user_id in user_batches and user_batches[user_id]:
-                    data = user_batches[user_id]
-                    
-                    final_text = f"✅ **BATCH COMPLETED ({len(data)} Files)**\n\n"
-                    
-                    for i, item in enumerate(data, 1):
-                        final_text += f"**{i}. {item['display_name']}**\n"
-                        final_text += f"`{item['link']}`\n"
-                        final_text += f"📦 {item['size']}\n\n"
-                    
-                    final_text += "⚡ **All files processed!**"
-                    
-                    try:
-                        if len(final_text) > 4000:
-                            parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
-                            for part in parts: 
-                                await client.send_message(user_id, part)
-                        else:
-                            await client.send_message(user_id, final_text)
-                    except: 
-                        pass
-                    
-                    # Cleanup Lists
-                    if user_id in user_batches: 
-                        del user_batches[user_id]
-                    if user_id in user_queue_numbers: 
-                        del user_queue_numbers[user_id]
-                        
         except Exception as e:
-            logging.error(f"Worker error: {e}")
+            print(f"❌ Worker error: {e}")
             continue
 
 # --- HANDLERS ---
@@ -204,47 +191,53 @@ async def worker_processor():
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
-    print(f"Start command received from {user_id}")  # Debug log
+    print(f"📱 /start from user: {user_id}")
+    print(f"Auth users: {AUTH_USERS}")
     
     if user_id in AUTH_USERS:
-        await message.reply_text("✅ **Bot is Ready!**\nSend me files or Telegram links to upload.")
+        await message.reply_text("✅ **Bot is Ready!**\nSend files or Telegram links.")
     else:
-        await message.reply_text("🔒 **Bot is Locked!**\nPlease send the password to unlock.")
+        await message.reply_text("🔒 **Locked!**\nSend password to unlock.")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
     user_id = message.from_user.id
     text = message.text.strip()
+    
+    print(f"📝 Text from {user_id}: {text}")
 
-    # Password check
     if user_id not in AUTH_USERS:
         if text == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Access Granted!**\nNow you can use the bot.")
+            await message.reply_text("🔓 **Access Granted!**")
+            print(f"✅ User {user_id} authenticated")
         else:
-            await message.reply_text("❌ **Wrong Password!**")
+            await message.reply_text("❌ Wrong Password!")
         return
 
-    # Link Handler
     if "t.me/" in text or "telegram.me/" in text:
         if not userbot:
             return await message.reply_text("❌ Userbot not configured!")
         
         try:
-            # Extract chat and message ID from link
+            print(f"🔗 Processing link: {text}")
             clean_link = text.replace("https://", "").replace("http://", "")
             clean_link = clean_link.replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
             
-            if "c" in parts:  # Private channel
+            print(f"Link parts: {parts}")
+            
+            if "c" in parts:
                 idx = parts.index("c")
                 chat_id = int("-100" + parts[idx + 1])
                 msg_id = int(parts[-1])
-            else:  # Public chat
+            else:
                 chat_id = parts[0]
                 msg_id = int(parts[-1].split("?")[0])
             
+            print(f"Getting message from {chat_id}/{msg_id}")
             target_msg = await userbot.get_messages(chat_id, msg_id)
+            print(f"Got message: {target_msg}")
             
             m_type = None
             if target_msg.document:
@@ -259,20 +252,20 @@ async def handle_text(client, message):
             if m_type:
                 media = getattr(target_msg, m_type)
                 
-                # Queue numbering
                 if user_id not in user_queue_numbers: 
                     user_queue_numbers[user_id] = 0
                 user_queue_numbers[user_id] += 1
                 q_pos = user_queue_numbers[user_id]
                 
                 queue_msg = await message.reply_text(f"🕒 **Added to Queue** (Position: {q_pos})")
+                print(f"📤 Added to queue position {q_pos}")
                 await upload_queue.put((client, message, media, m_type, target_msg, queue_msg))
             else:
-                await message.reply_text("❌ No media found in that message!")
+                await message.reply_text("❌ No media found!")
 
         except Exception as e:
+            print(f"❌ Link error: {e}")
             await message.reply_text(f"❌ Error: {str(e)}")
-            logging.error(f"Link error: {e}")
 
 @bot.on_message(filters.video | filters.document | filters.photo | filters.audio)
 async def handle_file(client, message):
@@ -281,7 +274,8 @@ async def handle_file(client, message):
     if user_id not in AUTH_USERS:
         return
     
-    # Determine media type
+    print(f"📁 File from {user_id}")
+    
     m_type = None
     if message.document:
         m_type = "document"
@@ -297,44 +291,46 @@ async def handle_file(client, message):
     
     media = getattr(message, m_type)
 
-    # Queue numbering
     if user_id not in user_queue_numbers: 
         user_queue_numbers[user_id] = 0
     user_queue_numbers[user_id] += 1
     q_pos = user_queue_numbers[user_id]
 
     queue_msg = await message.reply_text(f"🕒 **Added to Queue** (Position: {q_pos})")
+    print(f"📤 Added file to queue position {q_pos}")
     
     await upload_queue.put((client, message, media, m_type, None, queue_msg))
 
 async def main():
+    print("🚀 Starting main()")
     try:
-        # Start Flask in a separate thread
+        print("🔥 Starting Flask thread...")
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
-        print("✅ Flask server started")
+        print("✅ Flask thread started")
         
-        # Start worker
+        print("👷 Creating worker task...")
         asyncio.create_task(worker_processor())
-        print("✅ Worker processor started")
+        print("✅ Worker task created")
         
-        # Start bots
         print("🤖 Starting bot...")
         await bot.start()
-        print("✅ Bot started")
+        print("✅ Bot started successfully!")
         
         if userbot:
             print("🤖 Starting userbot...")
             await userbot.start()
-            print("✅ Userbot started")
+            print("✅ Userbot started successfully!")
         
         print(f"🚀 Bot is running! Auth users: {AUTH_USERS}")
+        print("📱 Send /start to your bot on Telegram")
         
-        # Keep running
         await idle()
         
     except Exception as e:
-        logging.error(f"Main error: {e}")
+        print(f"❌ Main error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         print("🛑 Stopping...")
         await bot.stop()
@@ -342,9 +338,12 @@ async def main():
             await userbot.stop()
 
 if __name__ == "__main__":
+    print("📝 Running main block")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped by user")
     except Exception as e:
-        logging.error(f"Fatal error: {e}")
+        print(f"❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
