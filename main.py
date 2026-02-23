@@ -37,7 +37,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "âš¡ Server is Active and Secure."
+    return "⚡ Server is Active and Secure."
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
@@ -95,15 +95,15 @@ async def process_queue_engine(client, message, tasks):
     total = len(tasks)
     completed_links = []
     
-    # Batch Setup
+    # 1. BATCH FOLDER (Sab kuch isme download hoga)
     batch_id = uuid.uuid4().hex
     batch_folder = f"downloads/{batch_id}"
     os.makedirs(batch_folder, exist_ok=True)
     
-    # 1. Single Status Message (Yehi update hota rahega)
+    # 2. STATUS MESSAGE (Yehi bar-bar edit hoga)
     status_msg = await message.reply_text(
-        f"â³ **Starting Queue...**\n"
-        f"ðŸ“Š Total Files: `{total}`"
+        f"⏳ **Initializing Batch...**\n"
+        f"📊 Total Tasks: `{total}`"
     )
     
     try:
@@ -112,23 +112,28 @@ async def process_queue_engine(client, message, tasks):
             data = task['data']
             task_type = task['type']
             
-            # Reset Variables
+            # Variables Reset
             local_path = None
             final_path = None
-            display_name = data.get('name', 'Unknown File')
+            display_name = "Unknown File"
             file_size_mb = 0.0
             media_type = "document"
 
             try:
-                # --- STEP 1: DOWNLOADING ---
-                # Message Edit karein (Naya message nahi bhejenge)
+                # --- STEP 1: IDENTIFY NAME ---
+                # User ko dikhane ke liye temporary naam
+                temp_name_display = data.get('name', 'Video/File')
+                
+                # UPDATE STATUS: DOWNLOADING
                 await status_msg.edit(
-                    f"â¬‡ï¸ **Downloading ({current_num}/{total})**\n\n"
-                    f"ðŸ“‚ File: `{display_name}`\n"
-                    f"âš¡ Please Wait..."
+                    f"⬇️ **Downloading ({current_num}/{total})**\n\n"
+                    f"📂 File: `{temp_name_display}`\n"
+                    f"⚡ Please Wait..."
                 )
 
-                # ... (Download Logic Same as Before) ...
+                # --- STEP 2: DOWNLOAD LOGIC ---
+                
+                # A. TELEGRAM FILES
                 if task_type in ["direct_media", "link"]:
                     msg = None
                     if task_type == "direct_media":
@@ -138,14 +143,13 @@ async def process_queue_engine(client, message, tasks):
                         chat_id = data['chat_id']
                         msg_id = data['msg_id']
                         fetcher = user_bot if (data['is_private'] and user_bot) else client
-                        
-                        try:
-                            msg = await fetcher.get_messages(chat_id, msg_id)
-                        except:
+                        try: msg = await fetcher.get_messages(chat_id, msg_id)
+                        except: 
                             if user_bot: msg = await user_bot.get_messages(chat_id, msg_id)
                         
                         if not msg or not msg.media: raise Exception("Media not found.")
                         
+                        # Type Detection
                         if msg.document: 
                             display_name = msg.document.file_name or "Document"
                             media_type = "document"
@@ -160,35 +164,49 @@ async def process_queue_engine(client, message, tasks):
                             media_type = "photo"
 
                     downloader = user_bot if user_bot else client
-                    temp_filename = f"temp_{uuid.uuid4().hex}"
+                    temp_filename = f"tg_{uuid.uuid4().hex}"
                     local_path = await downloader.download_media(msg, file_name=f"{batch_folder}/{temp_filename}")
 
+                # B. YOUTUBE VIDEO
                 elif task_type == "youtube":
-                    local_path, yt_title = await asyncio.to_thread(download_youtube_secure, data['url'], batch_folder)
-                    if not local_path: raise Exception("YT Download Error")
-                    display_name = yt_title
-                    media_type = "video"
+                    url = data['url']
+                    ydl_opts = {
+                        'format': 'best',
+                        'outtmpl': f'{batch_folder}/yt_%(id)s.%(ext)s',
+                        'noplaylist': True,
+                        'quiet': True
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = await asyncio.to_thread(ydl.extract_info, url, download=True)
+                        display_name = info.get('title', 'YouTube Video')
+                        media_type = "video"
+                        local_path = ydl.prepare_filename(info)
 
-                # --- STEP 2: SIZE CHECK & RENAMING ---
+                # --- STEP 3: RENAME & SIZE FIX ---
                 if not local_path or not os.path.exists(local_path):
-                    raise Exception("Download failed.")
+                    raise Exception("Download Failed")
 
+                # Cloud ke liye random naam generate karo
                 secure_name = get_secure_filename(display_name if task_type != "youtube" else local_path, media_type)
                 final_path = os.path.join(batch_folder, secure_name)
+                
+                # Rename/Move
                 os.rename(local_path, final_path)
 
-                # âœ… Accurate Size Calculation
+                # ✅ ACTUAL SIZE CALCULATION (Ab ye 100% sahi aayega)
                 if os.path.exists(final_path):
                     file_size_bytes = os.path.getsize(final_path)
                     file_size_mb = file_size_bytes / (1024 * 1024)
-                
-                # --- STEP 3: UPLOADING ---
-                # Message Edit (Ab Uploading dikhayega)
+                else:
+                    file_size_mb = 0.0
+
+                # --- STEP 4: UPLOADING ---
+                # UPDATE STATUS: UPLOADING
                 await status_msg.edit(
-                    f"â˜ï¸ **Uploading ({current_num}/{total})**\n\n"
-                    f"ðŸ“‚ File: `{display_name}`\n"
-                    f"ðŸ“¦ Size: `{file_size_mb:.2f} MB`\n"
-                    f"ðŸš€ Sending to Cloud..."
+                    f"☁️ **Uploading ({current_num}/{total})**\n\n"
+                    f"📂 File: `{display_name}`\n"
+                    f"📦 Size: `{file_size_mb:.2f} MB`\n"
+                    f"🚀 Sending to Cloud..."
                 )
 
                 api = HfApi(token=HF_TOKEN)
@@ -202,36 +220,38 @@ async def process_queue_engine(client, message, tasks):
 
                 final_link = f"{SITE_URL}/file/{secure_name}"
                 
-                # âœ… NEW FORMAT (Link Beech mein, Size Niche)
+                # ✅ FINAL FORMAT (Link First, Size Last)
                 entry = (
-                    f"ðŸ“‚ **{display_name}**\n"
-                    f"ðŸ”— `{final_link}`\n"
-                    f"ðŸ“¦ Size: {file_size_mb:.2f} MB"
+                    f"📂 **{display_name}**\n"
+                    f"🔗 `{final_link}`\n"
+                    f"📦 Size: {file_size_mb:.2f} MB"
                 )
                 completed_links.append(entry)
 
             except Exception as e:
                 print(f"Error: {e}")
-                completed_links.append(f"âŒ **Error:** {display_name}\nâš ï¸ `{str(e)[:50]}`")
+                completed_links.append(f"❌ **Error:** {display_name}\n⚠️ `{str(e)[:50]}`")
 
             finally:
+                # Cleanup Individual File
                 if final_path and os.path.exists(final_path): os.remove(final_path)
                 if local_path and os.path.exists(local_path): os.remove(local_path)
 
     finally:
+        # Cleanup Batch Folder
         if os.path.exists(batch_folder): shutil.rmtree(batch_folder)
         
-        # âœ… Status Message Delete (Kaam khatam hote hi)
+        # Delete Status Message
         try: await status_msg.delete()
         except: pass
 
-    # --- FINAL DELIVERY (Ek Saath) ---
-    final_text = "**âœ… Batch Completed**\n\n" + "\n\nâ”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”\n\n".join(completed_links)
+    # --- FINAL LIST SENDING ---
+    final_text = "**✅ Batch Processing Complete**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
     
     if len(final_text) > 4000:
         with open("Direct_Links.txt", "w", encoding="utf-8") as f:
             f.write(final_text.replace("**", "").replace("`", ""))
-        await message.reply_document("Direct_Links.txt", caption="âœ… **All Links Ready**")
+        await message.reply_document("Direct_Links.txt", caption="✅ **All Links Ready**")
         os.remove("Direct_Links.txt")
     else:
         await message.reply_text(final_text, disable_web_page_preview=True)
@@ -242,20 +262,20 @@ async def process_queue_engine(client, message, tasks):
 async def start_handler(client, message):
     user_id = message.from_user.id
     if user_id in auth_users:
-        await message.reply_text("ðŸ”“ **Session Already Active.**\nLinks ya Files bhejo, main ready hoon.")
+        await message.reply_text("🔓 **Session Already Active.**\nLinks ya Files bhejo, main ready hoon.")
     else:
-        await message.reply_text("ðŸ”’ **Protected System**\n\nAccess karne ke liye kripya **Password** likh kar bhejein.")
+        await message.reply_text("🔒 **Protected System**\n\nAccess karne ke liye kripya **Password** likh kar bhejein.")
 
 @bot.on_message(filters.command("batch") & filters.private)
 async def start_batch(client, message):
     user_id = message.from_user.id
     if user_id not in auth_users:
-        await message.reply_text("ðŸš« Pehle password bhej kar login karein.")
+        await message.reply_text("🚫 Pehle password bhej kar login karein.")
         return
         
     user_batch_mode[user_id] = True
     user_batches[user_id] = []
-    await message.reply_text("ðŸ“¦ **Batch Mode Enabled.**\nFiles/Links bhejein. Jab ho jaye to `/process` dabayein.")
+    await message.reply_text("📦 **Batch Mode Enabled.**\nFiles/Links bhejein. Jab ho jaye to `/process` dabayein.")
 
 @bot.on_message(filters.command("process") & filters.private)
 async def execute_batch(client, message):
@@ -265,7 +285,7 @@ async def execute_batch(client, message):
 
     tasks = user_batches.get(user_id, [])
     if not tasks:
-        await message.reply_text("âš ï¸ **Queue Empty.**")
+        await message.reply_text("⚠️ **Queue Empty.**")
         return
     
     user_batch_mode[user_id] = False
@@ -277,7 +297,7 @@ async def clear_queue(client, message):
     user_id = message.from_user.id
     if user_id in auth_users:
         user_batches[user_id] = []
-        await message.reply_text("ðŸ—‘ **Queue Cleared.**")
+        await message.reply_text("🗑 **Queue Cleared.**")
 
 # --- SMART MESSAGE HANDLER (Password + Content) ---
 
@@ -295,9 +315,9 @@ async def smart_handler(client, message):
         # Agar user logged in nahi hai, to check karo kya usne password bheja hai?
         if text == PASSWORD:
             auth_users.add(user_id)
-            await message.reply_text("âœ… **Access Granted!**\n\nAb aap Links ya Files bhej sakte hain.")
+            await message.reply_text("✅ **Access Granted!**\n\nAb aap Links ya Files bhej sakte hain.")
         else:
-            await message.reply_text("âŒ **Ghalat Password.**\nDobara koshish karein ya sahi password dalein.")
+            await message.reply_text("❌ **Ghalat Password.**\nDobara koshish karein ya sahi password dalein.")
         return  # Yahi ruk jao, aage file process mat karo
 
     # --- STEP 2: PROCESS CONTENT (Agar User Logged In Hai) ---
@@ -335,14 +355,14 @@ async def smart_handler(client, message):
     if task:
         if user_batch_mode.get(user_id):
             user_batches[user_id].append(task)
-            await message.reply_text(f"âž• **Queued** (Total: {len(user_batches[user_id])})", quote=True)
+            await message.reply_text(f"➕ **Queued** (Total: {len(user_batches[user_id])})", quote=True)
         else:
             # Single Mode
             asyncio.create_task(process_queue_engine(client, message, [task]))
     else:
         # Agar na password tha, na link, na file
         if not user_batch_mode.get(user_id):
-            await message.reply_text("â“ Kuch samajh nahi aaya. Link ya File bhejein.")
+            await message.reply_text("❓ Kuch samajh nahi aaya. Link ya File bhejein.")
 
 # --- MAIN EXECUTION ---
 async def main():
@@ -354,20 +374,20 @@ async def main():
 
     # Start Flask in separate thread
     threading.Thread(target=run_flask, daemon=True).start()
-    print("ðŸš€ Flask Server Starting...")
+    print("🚀 Flask Server Starting...")
 
     # Start User Bot (if configured)
     if SESSION_STRING:
         try:
             user_bot = Client("user_session", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING)
             await user_bot.start()
-            print("âœ… User Session Started Successfully!")
+            print("✅ User Session Started Successfully!")
         except Exception as e:
-            print(f"âš ï¸ User Session Failed: {e}")
+            print(f"⚠️ User Session Failed: {e}")
             user_bot = None
 
     # Start Main Bot
-    print("ðŸ”¥ Bot Started in Stealth Mode!")
+    print("🔥 Bot Started in Stealth Mode!")
     await bot.start()
     await idle()
     await bot.stop()
