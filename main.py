@@ -53,39 +53,187 @@ def run_flask():
 bot = Client("bot_session", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 user_bot = None
 
-# --- HELPER FUNCTIONS ---
+# --- HELPER FUNCTIONS (UPDATED) ---
+
 def get_secure_filename(original_name, media_type):
-    random_id = uuid.uuid4().hex[:8]
-    ext = "bin"
-    if "." in original_name:
+    # 1. Extension nikalo
+    ext = ""
+    if original_name and "." in original_name:
         ext = original_name.split(".")[-1].lower()
+    
+    # 2. Agar extension missing hai ya galat hai, to Force karo
+    if media_type == "video" and ext not in ["mp4", "mkv", "mov"]:
+        ext = "mp4"
+    elif media_type == "audio" and ext not in ["mp3", "m4a", "wav"]:
+        ext = "mp3"
+    elif media_type == "photo" and ext not in ["jpg", "png", "jpeg"]:
+        ext = "jpg"
+    elif media_type == "document" and not ext:
+        ext = "pdf" # Default for docs
+    
+    # 3. Random Name Generate karo
+    random_id = uuid.uuid4().hex[:8]
+    
+    # 4. Prefix lagao taki file pehchani jaye
+    prefix = media_type if media_type in ["video", "audio", "pdf"] else "file"
+    
+    return f"{prefix}_{random_id}.{ext}"
 
-    if media_type == "video" or "mp4" in ext or "mkv" in ext:
-        return f"video_{random_id}.mp4"
-    elif media_type == "audio" or "mp3" in ext:
-        return f"audio_{random_id}.mp3"
-    elif media_type == "photo" or "jpg" in ext or "png" in ext:
-        return f"image_{random_id}.jpg"
-    elif media_type == "document" and "pdf" in ext:
-        return f"pdf_{random_id}.pdf"
-    else:
-        return f"file_{random_id}.{ext}"
+# --- PROCESSING ENGINE (UPDATED) ---
 
-def download_youtube_secure(url, output_folder):
+async def process_queue_engine(client, user_id):
+    tasks = user_queues.get(user_id, [])
+    if not tasks: return
+    
+    user_queues[user_id] = [] # Clear Queue
+    total = len(tasks)
+    completed_links = []
+    
+    # Batch Folder
+    batch_id = uuid.uuid4().hex
+    batch_folder = f"downloads/{batch_id}"
+    os.makedirs(batch_folder, exist_ok=True)
+    
+    # Status Message
+    status_msg = await client.send_message(
+        user_id,
+        f"⏳ **Batch Started...**\n"
+        f"📊 Total Files: `{total}`"
+    )
+    
     try:
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': f'{output_folder}/temp_%(id)s.%(ext)s',
-            'noplaylist': True,
-            'quiet': True
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            return filename, info.get('title', 'YouTube Video')
-    except Exception as e:
-        return None, str(e)
+        for index, task in enumerate(tasks):
+            current_num = index + 1
+            data = task['data']
+            task_type = task['type']
+            
+            # Variables Reset
+            local_path = None
+            final_path = None
+            display_name = "Unknown_File"
+            media_type = "document" # Default
 
+            try:
+                # --- STEP 1: DETECT TYPE & NAME ---
+                
+                if task_type in ["direct_media", "link"]:
+                    msg = None
+                    # ... (Message Fetching Logic Same) ...
+                    if task_type == "direct_media":
+                        msg = data['message_obj']
+                    elif task_type == "link":
+                        chat_id = data['chat_id']
+                        msg_id = data['msg_id']
+                        fetcher = user_bot if (data['is_private'] and user_bot) else client
+                        try: msg = await fetcher.get_messages(chat_id, msg_id)
+                        except: 
+                            if user_bot: msg = await user_bot.get_messages(chat_id, msg_id)
+                    
+                    if not msg or not msg.media: raise Exception("Media Missing")
+                    
+                    # ✅ STRICT TYPE DETECTION
+                    if msg.video:
+                        media_type = "video"
+                        display_name = msg.video.file_name or "Video.mp4"
+                    elif msg.document:
+                        media_type = "document"
+                        display_name = msg.document.file_name or "Document.pdf"
+                        # Agar document video hai (mkv/mp4)
+                        if "video" in msg.document.mime_type: media_type = "video"
+                    elif msg.audio:
+                        media_type = "audio"
+                        display_name = msg.audio.file_name or "Audio.mp3"
+                    elif msg.photo:
+                        media_type = "photo"
+                        display_name = "Image.jpg"
+
+                    # Update Status
+                    await status_msg.edit(
+                        f"⬇️ **Downloading ({current_num}/{total})**\n\n"
+                        f"📂 File: `{display_name}`\n"
+                        f"⚡ Please Wait..."
+                    )
+
+                    # ✅ DOWNLOAD WITH EXTENSION
+                    downloader = user_bot if user_bot else client
+                    # Hum pehle hi extension guess kar lenge
+                    ext = display_name.split(".")[-1] if "." in display_name else "bin"
+                    temp_filename = f"temp_{uuid.uuid4().hex}.{ext}"
+                    
+                    local_path = await downloader.download_media(msg, file_name=f"{batch_folder}/{temp_filename}")
+
+                elif task_type == "youtube":
+                    # ... (YouTube Logic) ...
+                    local_path, yt_title = await asyncio.to_thread(download_youtube_secure, data['url'], batch_folder)
+                    display_name = f"{yt_title}.mp4"
+                    media_type = "video"
+
+                # --- STEP 2: RENAME TO SECURE FORMAT ---
+                if not local_path or not os.path.exists(local_path):
+                    raise Exception("Download Failed")
+                
+                # Size Check
+                file_size_bytes = os.path.getsize(local_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+
+                # ✅ FORCE EXTENSION FIX
+                secure_name = get_secure_filename(display_name, media_type)
+                final_path = os.path.join(batch_folder, secure_name)
+                
+                # Rename/Move
+                os.rename(local_path, final_path)
+
+                # --- STEP 3: UPLOADING ---
+                await status_msg.edit(
+                    f"☁️ **Uploading ({current_num}/{total})**\n\n"
+                    f"📂 File: `{display_name}`\n"
+                    f"📦 Size: `{file_size_mb:.2f} MB`\n"
+                    f"🚀 Sending to Cloud..."
+                )
+
+                api = HfApi(token=HF_TOKEN)
+                await asyncio.to_thread(
+                    api.upload_file,
+                    path_or_fileobj=final_path,
+                    path_in_repo=secure_name,
+                    repo_id=HF_REPO,
+                    repo_type="dataset"
+                )
+
+                final_link = f"{SITE_URL}/file/{secure_name}"
+                
+                # Entry Add
+                entry = (
+                    f"📂 **{display_name}**\n"
+                    f"🔗 `{final_link}`\n"
+                    f"📦 Size: {file_size_mb:.2f} MB"
+                )
+                completed_links.append(entry)
+
+            except Exception as e:
+                print(f"Error: {e}")
+                completed_links.append(f"❌ **Error:** {display_name}\n⚠️ `{str(e)[:30]}`")
+
+            finally:
+                # ✅ DELETE LOCAL FILE IMMEDIATELY (Sequential cleanup)
+                if final_path and os.path.exists(final_path): os.remove(final_path)
+                if local_path and os.path.exists(local_path): os.remove(local_path)
+
+    finally:
+        if os.path.exists(batch_folder): shutil.rmtree(batch_folder)
+        try: await status_msg.delete()
+        except: pass
+
+    # Final Message
+    final_text = "**✅ Batch Processing Complete**\n\n" + "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(completed_links)
+    
+    if len(final_text) > 4000:
+        with open("Links.txt", "w", encoding="utf-8") as f:
+            f.write(final_text.replace("**", "").replace("`", ""))
+        await client.send_document(user_id, "Links.txt", caption="✅ **All Links Ready**")
+        os.remove("Links.txt")
+    else:
+        await client.send_message(user_id, final_text, disable_web_page_preview=True)
 # --- PROCESSING ENGINE (THE MAIN WORKER) ---
 
 async def process_queue_engine(client, user_id):
