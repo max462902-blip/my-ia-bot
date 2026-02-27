@@ -1,102 +1,80 @@
 import os
-import asyncio
-import threading
-import logging
 import requests
-from flask import Flask, redirect
-from pyrogram import Client, filters, idle
-from dotenv import load_dotenv
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# --- SETUP ---
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
+# --- CONFIGURATION (Environment Variables) ---
+# Render पर आपको ये Environment Variables में डालने होंगे
+API_ID = int(os.environ.get("API_ID", "YOUR_API_ID_HERE"))
+API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH_HERE")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-# --- CONFIG ---
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
+app = Client("pdf_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- QUEUE SYSTEM (LOCK) ---
-# Ye ensure karega ki ek baar me ek hi file download ho
-# Taaki storage full na ho.
-QUEUE_LOCK = asyncio.Lock()
-
-# --- WEB SERVER (Link Generator) ---
-app = Flask(__name__)
-
-@app.route('/')
-def home(): return "Bot is Running..."
-
-@app.route('/view/<file_id>')
-def view_file(file_id):
+# Catbox पर अपलोड करने का फंक्शन
+def upload_to_catbox(file_path):
+    url = "https://catbox.moe/user/api.php"
+    data = {
+        "reqtype": "fileupload",
+        "userhash": ""
+    }
     try:
-        # Telegram API se file path lekar redirect karenge
-        req = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}")
-        resp = req.json()
-        if resp['ok']:
-            path = resp['result']['file_path']
-            return redirect(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}")
-    except: pass
-    return "❌ Link Expired or Error", 404
+        with open(file_path, "rb") as f:
+            files = {"fileToUpload": f}
+            response = requests.post(url, data=data, files=files)
+            if response.status_code == 200:
+                return response.text # यह लिंक रिटर्न करेगा
+            else:
+                return None
+    except Exception as e:
+        print(f"Error uploading: {e}")
+        return None
 
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+@app.on_message(filters.document | filters.video | filters.audio) # PDF और अन्य फाइल्स के लिए
+async def handle_document(client, message):
+    # चेक करें कि फाइल साइज 400MB से ज्यादा न हो (Render लिमिट के कारण)
+    if message.document and message.document.file_size > 400 * 1024 * 1024:
+        await message.reply_text("❌ फाइल बहुत बड़ी है। Render Free Tier पर केवल 400MB तक की फाइल भेजें।")
+        return
 
-# --- BOT CLIENT ---
-bot = Client("pdf_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# --- PDF HANDLER ---
-@bot.on_message(filters.document)
-async def handle_pdf(client, message):
-    # Sirf PDF Check
-    if not message.document.mime_type == "application/pdf":
-        return await message.reply("❌ Sirf PDF bhejo.")
-
-    status = await message.reply("⏳ **Added to Queue...** (Waiting for turn)")
+    status_msg = await message.reply_text("📥 **Downloading...**\n\nकृपया प्रतीक्षा करें, यह Render सर्वर पर आ रहा है।")
     
-    # --- QUEUE START ---
-    # Jab tak pehli file delete nahi hoti, dusri wait karegi
-    async with QUEUE_LOCK:
-        local_path = None
-        try:
-            await status.edit("⬇️ **Downloading...**")
-            
-            # 1. Download
-            local_path = await message.download()
-            
-            # 2. Upload to Chat Box
-            await status.edit("⬆️ **Uploading to Chat...**")
-            uploaded_msg = await message.reply_document(
-                document=local_path,
-                caption="⚙️ **Generating Link...**"
-            )
-
-            # 3. Generate Link
-            file_id = uploaded_msg.document.file_id
-            view_link = f"{SITE_URL}/view/{file_id}"
-
-            # 4. Edit Caption
-            original_name = message.document.file_name
-            await uploaded_msg.edit_caption(
-                f"**Chat Box PDF**\n\n"
-                f"🏷️ **Name:** `{original_name}`\n"
-                f"🔗 **One Tap Copy Link:**\n"
-                f"`{view_link}`"
-            )
-            await status.delete()
-
-        except Exception as e:
-            await status.edit(f"❌ Error: {e}")
+    try:
+        # 1. फाइल डाउनलोड करें
+        file_path = await message.download()
         
-        finally:
-            # 5. STORAGE CLEANUP (Sabse Important)
-            # Chahe error aaye ya success, file delete honi chahiye
-            if local_path and os.path.exists(local_path):
-                os.remove(local_path)
-                print(f"Deleted: {local_path}")
+        await status_msg.edit_text("📤 **Uploading to Cloud...**\n\nअब इसे क्लाउड पर भेज रहे हैं ताकि लिंक बन सके।")
+        
+        # 2. कैटबॉक्स पर अपलोड करें
+        link = upload_to_catbox(file_path)
+        
+        # 3. फाइल डिलीट करें (Render स्टोरेज बचाने के लिए)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        
+        if link and "catbox" in link:
+            # 4. लिंक और बटन भेजें
+            # ` ` (backticks) का इस्तेमाल वन टैप कॉपी के लिए होता है
+            
+            caption = (
+                f"✅ **File Uploaded Successfully!**\n\n"
+                f"📂 **File Name:** `{message.document.file_name if message.document else 'File'}`\n\n"
+                f"🔗 **One Tap Copy Link:**\n`{link}`"
+            )
+            
+            button = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("📂 Open PDF / File", url=link)]]
+            )
+            
+            await status_msg.edit_text(caption, reply_markup=button)
+        else:
+            await status_msg.edit_text("❌ अपलोड में कोई त्रुटि हुई। कृपया दोबारा प्रयास करें।")
+            
+    except Exception as e:
+        # अगर कोई एरर आए तो भी लोकल फाइल डिलीट करें
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        await status_msg.edit_text(f"Error: {e}")
 
-# --- START ---
-if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    bot.run()
+print("Bot Started...")
+app.run()
