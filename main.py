@@ -12,13 +12,14 @@ from dotenv import load_dotenv
 # --- SETUP ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# --- SERVER KEEPER ---
+# --- SERVER KEEPER (Flask) ---
 app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "All-Rounder Bot is Running!"
+def home(): return "Bot is Alive and Running!"
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
@@ -38,7 +39,6 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 HF_REPO = os.getenv("HF_REPO")
 SESSION_STRING = os.getenv("SESSION_STRING")
 
-# --- SECURITY ---
 ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
@@ -54,16 +54,19 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- MAIN UPLOAD FUNCTION ---
+# --- UPLOAD FUNCTION ---
 async def process_and_upload(media, message_to_reply, original_msg=None, media_type=None):
+    status = None
     local_path = None
     try:
+        # 1. Start Processing
+        status = await message_to_reply.reply_text("⏳ **Initializing...**")
+        
         unique_id = uuid.uuid4().hex[:6]
         
-        # --- NAME & TYPE DETECTION ---
-        # Original filename nikalne ki koshish
+        # Determine Filename
         original_name = getattr(media, "file_name", f"file_{unique_id}")
-
+        
         if media_type == "photo":
             final_filename = f"image_{unique_id}.jpg"
             file_type_msg = "🖼️ Image"
@@ -71,30 +74,28 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
             final_filename = f"video_{unique_id}.mp4"
             file_type_msg = "🎬 Video"
         else:
-            # Document handling
-            ext = os.path.splitext(original_name)[1]
+            # Document
+            name, ext = os.path.splitext(original_name)
             if not ext: ext = ".pdf"
             final_filename = f"document_{unique_id}{ext}"
             file_type_msg = "📄 PDF"
-        
+
         file_size = get_readable_size(getattr(media, "file_size", 0))
 
-        status = await message_to_reply.reply_text(f"⏳ **Processing...**\n`{final_filename}`")
-
-        # Download Path
-        if not os.path.exists("downloads"): os.makedirs("downloads")
+        # 2. Download
+        if not os.path.exists("downloads"): 
+            os.makedirs("downloads")
+        
         local_path = f"downloads/{final_filename}"
+        await status.edit(f"⬇️ **Downloading...**\n`{final_filename}`")
         
-        await status.edit("⬇️ **Downloading...**")
-        
-        # Download
         if original_msg:
             await original_msg.download(file_name=local_path)
         else:
             await message_to_reply.download(file_name=local_path)
 
-        # Upload to Hugging Face
-        await status.edit("⬆️ **Uploading to Server...**")
+        # 3. Upload to Hugging Face
+        await status.edit("⬆️ **Uploading to Cloud...**")
         api = HfApi(token=HF_TOKEN)
         
         await asyncio.to_thread(
@@ -107,25 +108,26 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
         branded_link = f"{SITE_URL}/file/{final_filename}"
         
-        # --- SPECIAL HANDLING FOR PDF (NO BUTTON, ONLY ONE TAP LINK) ---
+        # --- PDF LOGIC (Upload to Chat + One Tap Link) ---
         if media_type == "document" and final_filename.lower().endswith(".pdf"):
-            await status.edit("⬆️ **Uploading to Chat...**")
+            await status.edit("⬆️ **Sending PDF to Chat...**")
             
-            # Sirf One Tap Link, koi button nahi
             caption_text = (
-                f"Chat Box PDF\n\n"
+                f"**Chat Box PDF**\n\n"
                 f"`{branded_link}`"
             )
             
-            # Send Document to Chat
-            await message_to_reply.reply_document(
-                document=local_path,
-                caption=caption_text
-            )
-            # Status delete kar denge
-            await status.delete()
+            try:
+                # Document wapis bhejo
+                await message_to_reply.reply_document(
+                    document=local_path,
+                    caption=caption_text
+                )
+                await status.delete() # Success hone par status delete
+            except Exception as e:
+                await status.edit(f"❌ Failed to send PDF back: {e}")
 
-        # --- HANDLING FOR VIDEO/PHOTO (OLD STYLE: LINK + BUTTON) ---
+        # --- VIDEO/PHOTO LOGIC (Link + Button) ---
         else:
             if media_type == "video":
                 btn = InlineKeyboardButton("🎬 Play Video", url=branded_link)
@@ -140,13 +142,14 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
             await message_to_reply.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
 
     except Exception as e:
-        if 'status' in locals() and status:
-            await status.edit(f"❌ Error: {str(e)}")
+        logger.error(f"Error: {e}")
+        if status:
+            await status.edit(f"❌ **Error:** {str(e)}")
         else:
-            await message_to_reply.reply_text(f"❌ Error: {str(e)}")
+            await message_to_reply.reply_text(f"❌ **Error:** {str(e)}")
     
     finally:
-        # Clean up local file
+        # Cleanup
         if local_path and os.path.exists(local_path):
             os.remove(local_path)
 
@@ -155,9 +158,9 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Access Granted!**\nAb PDF, Video aur **Photos** bhejo.")
+        await message.reply_text("✅ **Bot Ready!**\nSend PDF, Video or Photo.")
     else:
-        await message.reply_text("🔒 **Bot Locked!**\nAccess ID bhejo. ( Telegram ID - @Kaal_shadow )")
+        await message.reply_text("🔒 **Locked.** Send Password.")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
@@ -167,35 +170,30 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 Bot Unlocked! Access ID sahi hai ab apni files bhej skte ho.")
+            await message.reply_text("🔓 **Unlocked!** Ab files bhejo.")
         else:
-            await message.reply_text("❌ Galat ID.")
+            await message.reply_text("❌ Wrong Password.")
         return
 
-    # Link Handler
+    # Link Handling
     if "t.me/" in text or "telegram.me/" in text:
-        if not userbot: return await message.reply_text("❌ Userbot missing.")
+        if not userbot: 
+            return await message.reply_text("❌ Userbot not active.")
         
-        wait_msg = await message.reply_text("🕵️ **Fetching Content...**")
+        wait_msg = await message.reply_text("🔎 **Checking Link...**")
         try:
-            # Smart Parsing
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
 
-            # Determine Chat ID
             if parts[0] == "c":
                 chat_id = int("-100" + parts[1])
             else:
                 chat_id = parts[0]
             
-            # Determine Message ID
-            msg_id_part = parts[-1].split("?")[0]
-            msg_id = int(msg_id_part)
+            msg_id = int(parts[-1].split("?")[0])
 
-            # Fetch Message
             target_msg = await userbot.get_messages(chat_id, msg_id)
             
-            # Detect Media Type
             if target_msg.photo:
                 media = target_msg.photo
                 m_type = "photo"
@@ -207,19 +205,19 @@ async def handle_text(client, message):
                 m_type = "document"
             else:
                 await wait_msg.delete()
-                return await message.reply_text("❌ Is link par koi File/Photo nahi mili.")
+                return await message.reply_text("❌ Media not found in link.")
 
             await wait_msg.delete()
             await process_and_upload(media, message, original_msg=target_msg, media_type=m_type)
             
         except Exception as e:
-            await message.reply_text(f"❌ Error: {e}\n\n*Note:* Agar private link hai to Userbot join hona chahiye.")
+            await message.reply_text(f"❌ Error: {e}")
 
-# DIRECT FILE HANDLER
+# Direct File Handler
 @bot.on_message(filters.video | filters.document | filters.photo)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
-        return await message.reply_text("🔒 Locked!")
+        return await message.reply_text("🔒 Password bhejo pehle.")
     
     if message.photo:
         media = message.photo
@@ -235,8 +233,12 @@ async def handle_file(client, message):
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
+    print("Bot Starting...")
     await bot.start()
-    if userbot: await userbot.start()
+    if userbot: 
+        print("Userbot Starting...")
+        await userbot.start()
+    print("System Online.")
     await idle()
     await bot.stop()
     if userbot: await userbot.stop()
