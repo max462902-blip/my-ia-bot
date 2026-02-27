@@ -1,132 +1,102 @@
 import os
-import threading
 import asyncio
+import threading
+import logging
 import requests
 from flask import Flask, redirect
 from pyrogram import Client, filters, idle
 from dotenv import load_dotenv
 
+# --- SETUP ---
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
-# --- SERVER (LINK GENERATOR) ---
-app = Flask(__name__)
-SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
-
-@app.route('/')
-def home(): return "PDF Bot Online"
-
-@app.route('/view/<file_id>')
-def view(file_id):
-    try:
-        token = os.environ.get("BOT_TOKEN")
-        # File Path mangwana Telegram se
-        data = requests.get(f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}").json()
-        if data['ok']:
-            path = data['result']['file_path']
-            # Direct Chrome Link
-            return redirect(f"https://api.telegram.org/file/bot{token}/{path}")
-    except: pass
-    return "Error: Link Expired", 404
-
-def run_flask(): app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
-
-# --- BOT SETUP ---
+# --- CONFIG ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SESSION = os.getenv("SESSION_STRING")
+SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
-bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-userbot = Client("userbot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION) if SESSION else None
+# --- QUEUE SYSTEM (LOCK) ---
+# Ye ensure karega ki ek baar me ek hi file download ho
+# Taaki storage full na ho.
+QUEUE_LOCK = asyncio.Lock()
 
-AUTH = set()
-PASS = "kp_2324"
+# --- WEB SERVER (Link Generator) ---
+app = Flask(__name__)
 
-# --- PDF PROCESSOR ---
-async def process_pdf(media, msg, original_msg=None):
+@app.route('/')
+def home(): return "Bot is Running..."
+
+@app.route('/view/<file_id>')
+def view_file(file_id):
     try:
-        status = await msg.reply("⏳ **Processing PDF...**")
-        
-        # 1. Filename & Size
-        fname = getattr(media, "file_name", "document.pdf")
-        if not fname.endswith(".pdf"): fname += ".pdf"
-        
-        # 2. Download
-        path = f"downloads/{fname}"
-        if not os.path.exists("downloads"): os.makedirs("downloads")
-        
-        await status.edit("⬇️ **Downloading...**")
-        if original_msg: await original_msg.download(path)
-        else: await msg.download(path)
-        
-        # 3. Upload to Chat
-        await status.edit("⬆️ **Uploading...**")
-        upl_msg = await msg.reply_document(document=path, caption="⚙️ **Generating Link...**")
-        
-        # 4. Cleanup & Link
-        if os.path.exists(path): os.remove(path)
-        
-        link = f"{SITE_URL}/view/{upl_msg.document.file_id}"
-        
-        await upl_msg.edit_caption(
-            f"**Chat Box PDF**\n\n"
-            f"🏷️ **Name:** `{fname}`\n"
-            f"🔗 **One Tap Copy Link:**\n"
-            f"`{link}`"
-        )
-        await status.delete()
-        
-    except Exception as e:
-        await status.edit(f"❌ Error: {e}")
+        # Telegram API se file path lekar redirect karenge
+        req = requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}")
+        resp = req.json()
+        if resp['ok']:
+            path = resp['result']['file_path']
+            return redirect(f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}")
+    except: pass
+    return "❌ Link Expired or Error", 404
 
-# --- HANDLERS ---
-@bot.on_message(filters.command("start"))
-async def start(_, m):
-    if m.from_user.id in AUTH: await m.reply("✅ Send PDF.")
-    else: await m.reply("🔒 Password?")
+def run_flask():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-@bot.on_message(filters.text & filters.private)
-async def text_handler(_, m):
-    if m.from_user.id not in AUTH:
-        if m.text == PASS:
-            AUTH.add(m.from_user.id)
-            await m.reply("🔓 Unlocked! Send PDF.")
-        else: await m.reply("❌ Wrong.")
-        return
+# --- BOT CLIENT ---
+bot = Client("pdf_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-    # Link Logic
-    if "t.me/" in m.text and userbot:
-        try:
-            link = m.text.replace("https://", "").replace("t.me/", "")
-            parts = link.split("/")
-            chat = int("-100" + parts[1]) if parts[0] == "c" else parts[0]
-            msg_id = int(parts[-1].split("?")[0])
-            
-            t_msg = await userbot.get_messages(chat, msg_id)
-            if t_msg.document and t_msg.document.mime_type == "application/pdf":
-                await process_pdf(t_msg.document, m, t_msg)
-            else:
-                await m.reply("❌ Sirf PDF Link bhejo.")
-        except Exception as e: await m.reply(f"❌ Error: {e}")
-
+# --- PDF HANDLER ---
 @bot.on_message(filters.document)
-async def file_handler(_, m):
-    if m.from_user.id in AUTH:
-        if m.document.mime_type == "application/pdf":
-            await process_pdf(m.document, m)
-        else:
-            await m.reply("❌ Only PDF allowed.")
-    else: await m.reply("🔒 Locked.")
+async def handle_pdf(client, message):
+    # Sirf PDF Check
+    if not message.document.mime_type == "application/pdf":
+        return await message.reply("❌ Sirf PDF bhejo.")
 
-# --- RUN ---
-async def main():
-    threading.Thread(target=run_flask, daemon=True).start()
-    await bot.start()
-    if userbot: await userbot.start()
-    await idle()
-    await bot.stop()
-    if userbot: await userbot.stop()
+    status = await message.reply("⏳ **Added to Queue...** (Waiting for turn)")
+    
+    # --- QUEUE START ---
+    # Jab tak pehli file delete nahi hoti, dusri wait karegi
+    async with QUEUE_LOCK:
+        local_path = None
+        try:
+            await status.edit("⬇️ **Downloading...**")
+            
+            # 1. Download
+            local_path = await message.download()
+            
+            # 2. Upload to Chat Box
+            await status.edit("⬆️ **Uploading to Chat...**")
+            uploaded_msg = await message.reply_document(
+                document=local_path,
+                caption="⚙️ **Generating Link...**"
+            )
 
+            # 3. Generate Link
+            file_id = uploaded_msg.document.file_id
+            view_link = f"{SITE_URL}/view/{file_id}"
+
+            # 4. Edit Caption
+            original_name = message.document.file_name
+            await uploaded_msg.edit_caption(
+                f"**Chat Box PDF**\n\n"
+                f"🏷️ **Name:** `{original_name}`\n"
+                f"🔗 **One Tap Copy Link:**\n"
+                f"`{view_link}`"
+            )
+            await status.delete()
+
+        except Exception as e:
+            await status.edit(f"❌ Error: {e}")
+        
+        finally:
+            # 5. STORAGE CLEANUP (Sabse Important)
+            # Chahe error aaye ya success, file delete honi chahiye
+            if local_path and os.path.exists(local_path):
+                os.remove(local_path)
+                print(f"Deleted: {local_path}")
+
+# --- START ---
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    threading.Thread(target=run_flask, daemon=True).start()
+    bot.run()
