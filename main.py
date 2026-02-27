@@ -3,6 +3,7 @@ import uuid
 import threading
 import logging
 import asyncio
+import requests
 from flask import Flask, redirect, request
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -18,25 +19,29 @@ app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "Chat Box Bot Running (No HF)"
+def home(): return "Chat Box Bot is Online"
 
-# --- DIRECT VIEW LINK GENERATOR ---
-@app.route('/view')
-def view_file():
-    file_id = request.args.get('id')
-    if not file_id:
-        return "No File ID provided", 400
-    
+# --- MAGIC LINK GENERATOR ---
+# Ye route har baar fresh link layega Telegram server se
+@app.route('/view/<file_id>')
+def view_file(file_id):
     try:
-        # Bot token use karke file path nikala jayega
-        # Fir user ko Telegram server par redirect karenge
-        # Note: Ye method directly Chrome me open karega
-        file_obj = bot.get_file(file_id)
-        file_path = file_obj.file_path
-        real_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-        return redirect(real_url, code=302)
+        # Bot token use karke Telegram se file path mangwana
+        token = os.environ.get("BOT_TOKEN")
+        api_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
+        
+        resp = requests.get(api_url).json()
+        
+        if resp['ok']:
+            file_path = resp['result']['file_path']
+            # Ye link Chrome me direct open hogi
+            direct_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+            return redirect(direct_url, code=302)
+        else:
+            return f"❌ Telegram Error: {resp.get('description')}. (Note: Telegram sirf 20MB tak direct link deta hai)", 404
+            
     except Exception as e:
-        return f"Error: Link Expired or File too big for Bot API. {e}", 404
+        return f"❌ Server Error: {e}", 500
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -63,11 +68,13 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- MAIN LOGIC (NO HUGGING FACE) ---
+# --- MAIN LOGIC ---
 async def process_and_upload(media, message_to_reply, original_msg=None, media_type=None):
     status = None
     local_path = None
     try:
+        status = await message_to_reply.reply_text("⏳ **Processing...**")
+        
         unique_id = uuid.uuid4().hex[:6]
         
         # --- FILENAME ---
@@ -82,8 +89,6 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
         file_size = get_readable_size(getattr(media, "file_size", 0))
 
-        status = await message_to_reply.reply_text(f"⏳ **Processing...**\n`{final_filename}`")
-
         # --- 1. DOWNLOAD (Render Local Storage) ---
         if not os.path.exists("downloads"): os.makedirs("downloads")
         local_path = f"downloads/{final_filename}"
@@ -95,42 +100,40 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
         else:
             await message_to_reply.download(file_name=local_path)
 
-        # --- 2. UPLOAD TO TELEGRAM CHAT ---
+        # --- 2. UPLOAD TO CHAT BOX ---
         await status.edit("⬆️ **Uploading to Chat Box...**")
         
         uploaded_msg = None
+        # Hum pehle file upload karenge, caption baad me edit karenge link ke sath
         if media_type == "video":
             uploaded_msg = await message_to_reply.reply_video(
                 video=local_path,
-                caption="⏳ **Generating Link...**"
+                caption="⚙️ **Generating Link...**"
             )
         else:
             uploaded_msg = await message_to_reply.reply_document(
                 document=local_path,
-                caption="⏳ **Generating Link...**"
+                caption="⚙️ **Generating Link...**"
             )
 
-        # --- 3. DELETE LOCAL FILE (CLEANUP) ---
+        # --- 3. DELETE LOCAL FILE (Render Free Rahega) ---
         if os.path.exists(local_path):
             os.remove(local_path)
-            logger.info(f"Deleted {local_path}")
 
-        # --- 4. GENERATE LINK (Using File ID) ---
-        # File ID nikalenge jo abhi upload kiya hai
+        # --- 4. GENERATE LINK ---
+        # File ID nikalna
         file_id = None
-        if media_type == "video" and uploaded_msg.video:
-            file_id = uploaded_msg.video.file_id
-        elif uploaded_msg.document:
-            file_id = uploaded_msg.document.file_id
+        if uploaded_msg.video: file_id = uploaded_msg.video.file_id
+        elif uploaded_msg.document: file_id = uploaded_msg.document.file_id
         
         if not file_id:
-            await status.edit("❌ Error: Could not retrieve File ID.")
+            await status.edit("❌ Failed to retrieve File ID.")
             return
 
-        # View Link banayenge
-        view_link = f"{SITE_URL}/view?id={file_id}"
+        # Hamari server link jo Telegram par redirect karegi
+        view_link = f"{SITE_URL}/view/{file_id}"
 
-        # --- 5. UPDATE MESSAGE CAPTION ---
+        # --- 5. UPDATE CAPTION ---
         
         # PDF LOGIC
         if media_type == "document" or final_filename.endswith(".pdf"):
@@ -146,30 +149,21 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
         # VIDEO LOGIC
         elif media_type == "video":
-            # Video ke case me humne upar video bhej di hai
-            # Ab hum uska caption edit karke link denge ya naya message?
-            # User ne bola "Link dega mp4". Hum caption me hi link daal dete hain best rahega.
-            
+            # Video me user ko link chahiye thi
             video_caption = (
-                f"🎬 **Video Ready**\n\n"
-                f"🔗 **View Link (Chrome):**\n"
+                f"🎬 **Video Uploaded**\n\n"
+                f"🔗 **One Tap View Link:**\n"
                 f"`{view_link}`"
             )
             await uploaded_msg.edit_caption(video_caption)
-            
-            # Alag se bhi link bhej dete hain taaki copy easy ho
-            await message_to_reply.reply_text(
-                f"🎬 **Video Link:**\n`{view_link}`"
-            )
             await status.delete()
 
     except Exception as e:
         logger.error(f"Error: {e}")
         if status: await status.edit(f"❌ Error: {e}")
-        else: await message_to_reply.reply_text(f"❌ Error: {e}")
     
     finally:
-        # Double check cleanup
+        # Cleanup Safety
         if local_path and os.path.exists(local_path):
             os.remove(local_path)
 
@@ -178,9 +172,9 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Access Granted!**")
+        await message.reply_text("✅ **Bot Ready!** Send Files.")
     else:
-        await message.reply_text("🔒 **Enter Password:**")
+        await message.reply_text("🔒 **Password Required.**")
 
 @bot.on_message(filters.text & filters.private)
 async def handle_text(client, message):
@@ -190,14 +184,14 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Correct!** Ab Video ya PDF bhejo.")
+            await message.reply_text("🔓 **Access Granted!**")
         else:
             await message.reply_text("❌ Wrong Password.")
         return
 
     # Link Handling
     if "t.me/" in text or "telegram.me/" in text:
-        if not userbot: return await message.reply_text("❌ Userbot not active.")
+        if not userbot: return await message.reply_text("❌ Userbot missing.")
         
         status = await message.reply_text("🔎 **Checking Link...**")
         try:
@@ -215,7 +209,7 @@ async def handle_text(client, message):
                 media = target_msg.document
                 m_type = "document"
             else:
-                await status.edit("❌ Only PDF and Video allowed.")
+                await status.edit("❌ Only Video/PDF allowed.")
                 return
 
             await status.delete()
@@ -228,7 +222,7 @@ async def handle_text(client, message):
 @bot.on_message(filters.document | filters.video)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
-        return await message.reply_text("🔒 Password bhejo pehle.")
+        return await message.reply_text("🔒 Locked.")
     
     m_type = "video" if message.video else "document"
     await process_and_upload(media=message.video or message.document, message_to_reply=message, media_type=m_type)
