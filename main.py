@@ -54,12 +54,16 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- MAIN UPLOAD FUNCTION (Photo Added) ---
+# --- MAIN UPLOAD FUNCTION ---
 async def process_and_upload(media, message_to_reply, original_msg=None, media_type=None):
+    local_path = None
     try:
         unique_id = uuid.uuid4().hex[:6]
         
         # --- NAME & TYPE DETECTION ---
+        # Original filename nikalne ki koshish
+        original_name = getattr(media, "file_name", f"file_{unique_id}")
+
         if media_type == "photo":
             final_filename = f"image_{unique_id}.jpg"
             file_type_msg = "🖼️ Image"
@@ -67,7 +71,10 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
             final_filename = f"video_{unique_id}.mp4"
             file_type_msg = "🎬 Video"
         else:
-            final_filename = f"document_{unique_id}.pdf"
+            # Document handling
+            ext = os.path.splitext(original_name)[1]
+            if not ext: ext = ".pdf"
+            final_filename = f"document_{unique_id}{ext}"
             file_type_msg = "📄 PDF"
         
         file_size = get_readable_size(getattr(media, "file_size", 0))
@@ -86,8 +93,8 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
         else:
             await message_to_reply.download(file_name=local_path)
 
-        # Upload
-        await status.edit("⬆️ **Uploading...**")
+        # Upload to Hugging Face
+        await status.edit("⬆️ **Uploading to Server...**")
         api = HfApi(token=HF_TOKEN)
         
         await asyncio.to_thread(
@@ -100,24 +107,48 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
         branded_link = f"{SITE_URL}/file/{final_filename}"
         
-        # Reply Logic
-        if media_type == "video":
-            btn = InlineKeyboardButton("🎬 Play Video", url=branded_link)
-        elif media_type == "photo":
-            btn = InlineKeyboardButton("🖼️ View Image", url=branded_link)
+        # --- SPECIAL HANDLING FOR PDF (NO BUTTON, ONLY ONE TAP LINK) ---
+        if media_type == "document" and final_filename.lower().endswith(".pdf"):
+            await status.edit("⬆️ **Uploading to Chat...**")
+            
+            # Sirf One Tap Link, koi button nahi
+            caption_text = (
+                f"Chat Box PDF\n\n"
+                f"`{branded_link}`"
+            )
+            
+            # Send Document to Chat
+            await message_to_reply.reply_document(
+                document=local_path,
+                caption=caption_text
+            )
+            # Status delete kar denge
+            await status.delete()
+
+        # --- HANDLING FOR VIDEO/PHOTO (OLD STYLE: LINK + BUTTON) ---
         else:
-            btn = InlineKeyboardButton("📄 Open PDF", url=branded_link)
+            if media_type == "video":
+                btn = InlineKeyboardButton("🎬 Play Video", url=branded_link)
+            elif media_type == "photo":
+                btn = InlineKeyboardButton("🖼️ View Image", url=branded_link)
+            else:
+                btn = InlineKeyboardButton("📂 Download File", url=branded_link)
 
-        msg = f"✅ **{file_type_msg} Saved!**\n\n🔗 **Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
-
-        await status.delete()
-        await message_to_reply.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
+            msg = f"✅ **{file_type_msg} Saved!**\n\n🔗 **Link:**\n`{branded_link}`\n\n📦 **Size:** {file_size}"
+            
+            await status.delete()
+            await message_to_reply.reply_text(msg, reply_markup=InlineKeyboardMarkup([[btn]]))
 
     except Exception as e:
-        await status.edit(f"❌ Error: {str(e)}")
+        if 'status' in locals() and status:
+            await status.edit(f"❌ Error: {str(e)}")
+        else:
+            await message_to_reply.reply_text(f"❌ Error: {str(e)}")
     
     finally:
-        if os.path.exists(local_path): os.remove(local_path)
+        # Clean up local file
+        if local_path and os.path.exists(local_path):
+            os.remove(local_path)
 
 # --- HANDLERS ---
 
@@ -136,7 +167,7 @@ async def handle_text(client, message):
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 Bot Unlocked! access id shi hai ab apni files bhej skte ho ")
+            await message.reply_text("🔓 Bot Unlocked! Access ID sahi hai ab apni files bhej skte ho.")
         else:
             await message.reply_text("❌ Galat ID.")
         return
@@ -157,8 +188,7 @@ async def handle_text(client, message):
             else:
                 chat_id = parts[0]
             
-            # Determine Message ID (Last part is always msg_id)
-            # Remove query parameters if any (like ?single)
+            # Determine Message ID
             msg_id_part = parts[-1].split("?")[0]
             msg_id = int(msg_id_part)
 
@@ -185,7 +215,7 @@ async def handle_text(client, message):
         except Exception as e:
             await message.reply_text(f"❌ Error: {e}\n\n*Note:* Agar private link hai to Userbot join hona chahiye.")
 
-# DIRECT FILE HANDLER (Photo Added)
+# DIRECT FILE HANDLER
 @bot.on_message(filters.video | filters.document | filters.photo)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
