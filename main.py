@@ -3,7 +3,7 @@ import uuid
 import threading
 import logging
 import asyncio
-import requests
+import requests # Ye zaroori hai link generate karne ke liye
 from flask import Flask, redirect, request
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -19,29 +19,27 @@ app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "Chat Box Bot is Online"
+def home(): return "Bot is Online and Ready."
 
-# --- MAGIC LINK GENERATOR ---
-# Ye route har baar fresh link layega Telegram server se
+# --- VIEW LINK GENERATOR (Telegram Direct) ---
 @app.route('/view/<file_id>')
 def view_file(file_id):
     try:
-        # Bot token use karke Telegram se file path mangwana
         token = os.environ.get("BOT_TOKEN")
+        # Telegram API se file path mangwana
         api_url = f"https://api.telegram.org/bot{token}/getFile?file_id={file_id}"
-        
         resp = requests.get(api_url).json()
         
         if resp['ok']:
             file_path = resp['result']['file_path']
-            # Ye link Chrome me direct open hogi
+            # Direct Stream Link
             direct_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
             return redirect(direct_url, code=302)
         else:
-            return f"❌ Telegram Error: {resp.get('description')}. (Note: Telegram sirf 20MB tak direct link deta hai)", 404
+            return f"Error: {resp.get('description')} (File 20MB se badi ho sakti hai)", 404
             
     except Exception as e:
-        return f"❌ Server Error: {e}", 500
+        return f"Server Error: {e}", 500
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -57,6 +55,7 @@ ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
 # --- CLIENTS ---
+print("Connecting to Telegram...")
 bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
 userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
 
@@ -73,11 +72,10 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
     status = None
     local_path = None
     try:
+        print("Processing File...")
         status = await message_to_reply.reply_text("⏳ **Processing...**")
         
         unique_id = uuid.uuid4().hex[:6]
-        
-        # --- FILENAME ---
         original_name = getattr(media, "file_name", f"file_{unique_id}")
         
         if media_type == "video":
@@ -89,22 +87,20 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
         file_size = get_readable_size(getattr(media, "file_size", 0))
 
-        # --- 1. DOWNLOAD (Render Local Storage) ---
+        # 1. Download
         if not os.path.exists("downloads"): os.makedirs("downloads")
         local_path = f"downloads/{final_filename}"
         
         await status.edit("⬇️ **Downloading...**")
-        
         if original_msg:
             await original_msg.download(file_name=local_path)
         else:
             await message_to_reply.download(file_name=local_path)
 
-        # --- 2. UPLOAD TO CHAT BOX ---
-        await status.edit("⬆️ **Uploading to Chat Box...**")
+        # 2. Upload to Chat
+        await status.edit("⬆️ **Uploading to Chat...**")
         
         uploaded_msg = None
-        # Hum pehle file upload karenge, caption baad me edit karenge link ke sath
         if media_type == "video":
             uploaded_msg = await message_to_reply.reply_video(
                 video=local_path,
@@ -116,26 +112,22 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
                 caption="⚙️ **Generating Link...**"
             )
 
-        # --- 3. DELETE LOCAL FILE (Render Free Rahega) ---
+        # 3. Clean Local File
         if os.path.exists(local_path):
             os.remove(local_path)
 
-        # --- 4. GENERATE LINK ---
-        # File ID nikalna
+        # 4. Generate Link
         file_id = None
         if uploaded_msg.video: file_id = uploaded_msg.video.file_id
         elif uploaded_msg.document: file_id = uploaded_msg.document.file_id
         
         if not file_id:
-            await status.edit("❌ Failed to retrieve File ID.")
+            await status.edit("❌ Error: File ID not found.")
             return
 
-        # Hamari server link jo Telegram par redirect karegi
         view_link = f"{SITE_URL}/view/{file_id}"
 
-        # --- 5. UPDATE CAPTION ---
-        
-        # PDF LOGIC
+        # 5. Caption Update
         if media_type == "document" or final_filename.endswith(".pdf"):
             final_caption = (
                 f"**Chat Box PDF**\n\n"
@@ -147,9 +139,7 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
             await uploaded_msg.edit_caption(final_caption)
             await status.delete()
 
-        # VIDEO LOGIC
         elif media_type == "video":
-            # Video me user ko link chahiye thi
             video_caption = (
                 f"🎬 **Video Uploaded**\n\n"
                 f"🔗 **One Tap View Link:**\n"
@@ -159,11 +149,11 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
             await status.delete()
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        print(f"Error in process: {e}")
         if status: await status.edit(f"❌ Error: {e}")
+        else: await message_to_reply.reply_text(f"❌ Error: {e}")
     
     finally:
-        # Cleanup Safety
         if local_path and os.path.exists(local_path):
             os.remove(local_path)
 
@@ -171,8 +161,9 @@ async def process_and_upload(media, message_to_reply, original_msg=None, media_t
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
+    print(f"Command Recvd from {message.from_user.id}")
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("✅ **Bot Ready!** Send Files.")
+        await message.reply_text("✅ **Bot Ready!**")
     else:
         await message.reply_text("🔒 **Password Required.**")
 
@@ -180,11 +171,12 @@ async def start(client, message):
 async def handle_text(client, message):
     user_id = message.from_user.id
     text = message.text
+    print(f"Text Recvd: {text}")
 
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Access Granted!**")
+            await message.reply_text("🔓 **Unlocked!** Send files now.")
         else:
             await message.reply_text("❌ Wrong Password.")
         return
@@ -193,7 +185,7 @@ async def handle_text(client, message):
     if "t.me/" in text or "telegram.me/" in text:
         if not userbot: return await message.reply_text("❌ Userbot missing.")
         
-        status = await message.reply_text("🔎 **Checking Link...**")
+        status = await message.reply_text("🔎 **Checking...**")
         try:
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
@@ -209,18 +201,19 @@ async def handle_text(client, message):
                 media = target_msg.document
                 m_type = "document"
             else:
-                await status.edit("❌ Only Video/PDF allowed.")
+                await status.edit("❌ Only Video/PDF.")
                 return
 
             await status.delete()
             await process_and_upload(media, message, original_msg=target_msg, media_type=m_type)
             
         except Exception as e:
+            print(f"Link Error: {e}")
             await status.edit(f"❌ Error: {e}")
 
-# Direct File Logic
 @bot.on_message(filters.document | filters.video)
 async def handle_file(client, message):
+    print(f"File Recvd from {message.from_user.id}")
     if message.from_user.id not in AUTH_USERS:
         return await message.reply_text("🔒 Locked.")
     
@@ -229,8 +222,12 @@ async def handle_file(client, message):
 
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
+    print("Bot Starting...")
     await bot.start()
-    if userbot: await userbot.start()
+    if userbot: 
+        print("Userbot Starting...")
+        await userbot.start()
+    print("ALL SYSTEMS ONLINE")
     await idle()
     await bot.stop()
     if userbot: await userbot.stop()
