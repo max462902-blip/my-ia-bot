@@ -1,6 +1,6 @@
-flask
 pyrogram
 tgcrypto
+flask
 huggingface_hub
-yt_dlp
 python-dotenv
+kuriyan
