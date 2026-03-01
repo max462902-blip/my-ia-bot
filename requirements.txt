@@ -1,6 +1,6 @@
-pyrogram==2.0.106
-Flask==2.3.3
-huggingface-hub==0.20.3
-python-dotenv==1.0.0
-cryptg==0.4.0
-tgcrypto==1.2.5
+pyrogram
+Flask
+huggingface-hub
+python-dotenv
+cryptg
+tgcrypto
