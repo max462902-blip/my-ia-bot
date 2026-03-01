@@ -3,6 +3,7 @@ import uuid
 import threading
 import logging
 import asyncio
+import glob
 from flask import Flask, redirect
 from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -12,6 +13,21 @@ from dotenv import load_dotenv
 # --- SETUP ---
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- SESSION CLEANER (Purani yaadein delete karne ke liye) ---
+def clean_session_files():
+    print("🧹 Cleaning old session files...")
+    # Directory mein jitni bhi .session files hain unhe delete kar dega
+    for session_file in glob.glob("*.session"):
+        try:
+            os.remove(session_file)
+            print(f"🗑️ Deleted: {session_file}")
+        except Exception as e:
+            print(f"⚠️ Could not delete {session_file}: {e}")
+
+# Call cleaner before anything else
+clean_session_files()
 
 # --- SERVER KEEPER ---
 app = Flask(__name__)
@@ -43,8 +59,13 @@ ACCESS_PASSWORD = "kp_2324"
 AUTH_USERS = set()
 
 # --- CLIENTS ---
-bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4)
-userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4) if SESSION_STRING else None
+# in_memory=True lagaya hai taaki disk par file save na kare aur crash na ho
+bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workers=4, in_memory=True)
+
+# Userbot Client Setup
+userbot = None
+if SESSION_STRING:
+    userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, workers=4, in_memory=True)
 
 def get_readable_size(size):
     try:
@@ -54,7 +75,7 @@ def get_readable_size(size):
     except:
         return "Unknown"
 
-# --- MAIN UPLOAD FUNCTION (Photo Added) ---
+# --- MAIN UPLOAD FUNCTION ---
 async def process_and_upload(media, message_to_reply, original_msg=None, media_type=None):
     try:
         unique_id = uuid.uuid4().hex[:6]
@@ -143,29 +164,23 @@ async def handle_text(client, message):
 
     # Link Handler
     if "t.me/" in text or "telegram.me/" in text:
-        if not userbot: return await message.reply_text("❌ Userbot missing.")
+        if not userbot: return await message.reply_text("❌ Userbot Active nahi hai. Sirf direct files bhejo.")
         
         wait_msg = await message.reply_text("🕵️ **Fetching Content...**")
         try:
-            # Smart Parsing
             clean_link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
             parts = clean_link.split("/")
 
-            # Determine Chat ID
             if parts[0] == "c":
                 chat_id = int("-100" + parts[1])
             else:
                 chat_id = parts[0]
             
-            # Determine Message ID (Last part is always msg_id)
-            # Remove query parameters if any (like ?single)
             msg_id_part = parts[-1].split("?")[0]
             msg_id = int(msg_id_part)
 
-            # Fetch Message
             target_msg = await userbot.get_messages(chat_id, msg_id)
             
-            # Detect Media Type
             if target_msg.photo:
                 media = target_msg.photo
                 m_type = "photo"
@@ -183,9 +198,9 @@ async def handle_text(client, message):
             await process_and_upload(media, message, original_msg=target_msg, media_type=m_type)
             
         except Exception as e:
-            await message.reply_text(f"❌ Error: {e}\n\n*Note:* Agar private link hai to Userbot join hona chahiye.")
+            await message.reply_text(f"❌ Error: {e}\nCheck karo Userbot group mein hai ya nahi.")
 
-# DIRECT FILE HANDLER (Photo Added)
+# DIRECT FILE HANDLER
 @bot.on_message(filters.video | filters.document | filters.photo)
 async def handle_file(client, message):
     if message.from_user.id not in AUTH_USERS:
@@ -204,12 +219,34 @@ async def handle_file(client, message):
     await process_and_upload(media, message, media_type=m_type)
 
 async def main():
+    # Flask Start
     threading.Thread(target=run_flask, daemon=True).start()
-    await bot.start()
-    if userbot: await userbot.start()
+    
+    # --- Main Bot Start ---
+    print("🤖 Starting Main Bot...")
+    try:
+        await bot.start()
+        print("✅ Main Bot Started!")
+    except Exception as e:
+        print(f"❌ Main Bot Failed: {e}")
+        return
+
+    # --- Userbot Start (With Crash Protection) ---
+    if userbot:
+        print("👤 Starting Userbot...")
+        try:
+            await userbot.start()
+            print("✅ Userbot Started!")
+        except Exception as e:
+            print(f"⚠️ Userbot Fail ho gaya: {e}")
+            print("⚠️ Bot bina Userbot ke chalega (Sirf direct files).")
+    
     await idle()
+    
+    # Stop
     await bot.stop()
-    if userbot: await userbot.stop()
+    if userbot and userbot.is_connected:
+        await userbot.stop()
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
