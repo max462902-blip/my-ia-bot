@@ -3,4 +3,3 @@ tgcrypto
 flask
 huggingface_hub
 python-dotenv
-kuriyan
