@@ -4,3 +4,4 @@ huggingface-hub
 python-dotenv
 cryptg
 tgcrypto
+yt-dlp
