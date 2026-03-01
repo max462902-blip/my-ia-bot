@@ -4,4 +4,3 @@ tgcrypto
 huggingface_hub
 yt_dlp
 python-dotenv
-requests
