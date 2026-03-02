@@ -11,37 +11,43 @@ from dotenv import load_dotenv
 
 # --- SETUP ---
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-logger = logging.getLogger("SecureBot")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - [BOT] - %(message)s"
+)
+logger = logging.getLogger("Bot")
 
 # --- FLASK SERVER ---
 app = Flask(__name__)
 SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "⚡ System Online ⚡"
+def home(): return "Bot is Alive"
 
 @app.route('/file/<path:filename>')
 def file_redirect(filename):
     hf_repo = os.environ.get("HF_REPO")
-    # Redirect user silently
     return redirect(f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}?download=true", code=302)
 
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)), debug=False, use_reloader=False)
 
-# --- CONFIG ---
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_REPO = os.getenv("HF_REPO")
-SESSION_STRING = os.getenv("SESSION_STRING")
+# --- CONFIG CHECK ---
+try:
+    API_ID = int(os.getenv("API_ID"))
+    API_HASH = os.getenv("API_HASH")
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    HF_REPO = os.getenv("HF_REPO")
+    SESSION_STRING = os.getenv("SESSION_STRING")
+except Exception as e:
+    logger.error(f"❌ CONFIG ERROR: {e}")
+    exit(1)
 
 # --- CONSTANTS ---
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB in Bytes
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB Limit
 ACCESS_PASSWORD = "Maharaja Jaswant Singh"
-AUTH_USERS = set()  # Jo log password daal chuke hain
+AUTH_USERS = set()
 
 # --- CLIENTS ---
 bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
@@ -50,145 +56,111 @@ userbot = None
 if SESSION_STRING:
     userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, in_memory=True)
 
-# --- LOCK (Storage Safety) ---
-# Ek baar mein sirf ek upload taaki 512MB limit cross na ho
-queue_lock = asyncio.Lock()
+# --- LOCK ---
+# Queue lock taaki 500MB limit safe rahe
+process_lock = asyncio.Lock()
 
-# --- HELPER FUNCTIONS ---
-def get_size(size):
-    units = ["B", "KB", "MB", "GB"]
-    for unit in units:
+# --- HELPER ---
+def get_readable_size(size):
+    for unit in ['B', 'KB', 'MB', 'GB']:
         if size < 1024: return f"{size:.2f} {unit}"
         size /= 1024
     return "Unknown"
 
-async def safe_delete(path):
-    try:
-        if os.path.exists(path):
-            os.remove(path)
-            logger.info(f"🗑️ Deleted: {path}")
-    except:
-        pass
-
-# --- CORE LOGIC ---
-async def process_media(media, message_to_reply, original_msg=None):
-    # 1. CHECK SIZE (Crucial for Render)
+# --- MAIN LOGIC ---
+async def process_media(media, message, original_msg=None):
+    # 1. Check Size
     file_size = getattr(media, "file_size", 0)
     if file_size > MAX_FILE_SIZE:
-        return await message_to_reply.reply_text(
-            f"❌ **File Too Big!**\n\nLimit: 500MB\nYour File: {get_size(file_size)}\n\nProcess Cancelled to save server."
-        )
+        await message.reply_text("❌ **File too Big!**\nMax limit: 500MB")
+        return
 
-    # 2. GENERATE FILENAME
+    # 2. Rename Logic
     unique_id = uuid.uuid4().hex[:6]
-    media_type = str(type(media))
+    m_type = str(type(media))
     
-    if "Video" in media_type:
-        final_filename = f"video_{unique_id}.mp4"
-        file_icon = "🎬"
-    elif "Photo" in media_type:
-        final_filename = f"photo_{unique_id}.jpg"
-        file_icon = "🖼️"
-    elif "Audio" in media_type:
-        final_filename = f"music_{unique_id}.mp3"
-        file_icon = "🎵"
-    else:
-        # PDF / Document
-        if hasattr(media, "mime_type") and "pdf" in media.mime_type:
-            final_filename = f"pdf_{unique_id}.pdf"
-            file_icon = "📄"
-        else:
-            ext = getattr(media, "file_name", "file").split('.')[-1]
-            if len(ext) > 4: ext = "file"
-            final_filename = f"file_{unique_id}.{ext}"
-            file_icon = "📂"
+    if "Video" in m_type: final_name = f"video_{unique_id}.mp4"
+    elif "Photo" in m_type: final_name = f"photo_{unique_id}.jpg"
+    elif "Audio" in m_type: final_name = f"music_{unique_id}.mp3"
+    else: final_name = f"pdf_{unique_id}.pdf" # Default to PDF for docs
 
-    # Status Message
-    status = await message_to_reply.reply_text(f"⚙️ **Processing...**\n`{final_filename}`")
+    status = await message.reply_text(f"⏳ **Processing...**\n`{final_name}`")
     
-    # Path
+    # Path Setup
     if not os.path.exists("downloads"): os.makedirs("downloads")
-    local_path = f"downloads/{final_filename}"
+    local_path = f"downloads/{final_name}"
 
     try:
-        # 3. DOWNLOAD
-        await status.edit("⬇️ **Downloading to Server...**")
-        
+        # 3. Download
+        await status.edit("⬇️ **Downloading...**")
         if original_msg:
             await original_msg.download(file_name=local_path)
         else:
-            await message_to_reply.download(file_name=local_path)
+            await message.download(file_name=local_path)
 
-        # 4. UPLOAD
-        await status.edit("☁️ **Uploading to Cloud...**")
+        # 4. Upload
+        await status.edit("☁️ **Uploading...**")
         api = HfApi(token=HF_TOKEN)
         
         await asyncio.to_thread(
             api.upload_file,
             path_or_fileobj=local_path,
-            path_in_repo=final_filename,
+            path_in_repo=final_name,
             repo_id=HF_REPO,
             repo_type="dataset"
         )
 
-        # 5. GENERATE LINK
-        final_link = f"{SITE_URL}/file/{final_filename}"
-        
-        # 6. PREMIUM UI REPLY
+        # 5. Reply
+        link = f"{SITE_URL}/file/{final_name}"
         await status.delete()
         
-        btn = InlineKeyboardButton(f"{file_icon} Download / View", url=final_link)
-        
-        caption = (
-            f"{file_icon} **File Uploaded Successfully!**\n\n"
-            f"🆔 **ID:** `{final_filename}`\n"
-            f"📦 **Size:** `{get_size(file_size)}`\n"
-            f"🔗 **Link:**\n`{final_link}`"
-        )
-        
-        await message_to_reply.reply_text(
-            caption,
+        btn = InlineKeyboardButton("📂 Download / Open", url=link)
+        await message.reply_text(
+            f"✅ **Uploaded Successfully!**\n\n🆔 `{final_name}`\n🔗 **Link:**\n`{link}`",
             reply_markup=InlineKeyboardMarkup([[btn]]),
             disable_web_page_preview=True
         )
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        await status.edit("❌ **Server Error!**\nProcess failed. File deleted.")
+        await status.edit("❌ **Server Error.** File deleted.")
     
     finally:
-        # 7. SAFETY DELETE (Chahe success ho ya fail, file udegi)
-        await safe_delete(local_path)
+        # 6. Strict Cleanup
+        if os.path.exists(local_path): 
+            os.remove(local_path)
+            logger.info(f"Deleted: {local_path}")
 
 # --- HANDLERS ---
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
+    logger.info(f"Start command from {message.from_user.first_name}")
     if message.from_user.id in AUTH_USERS:
-        await message.reply_text("👋 **Welcome Back!**\nSend Video, PDF, Photo or Link.")
+        await message.reply_text("👋 **Welcome Back!**\nSend files or links.")
     else:
-        await message.reply_text("🔒 **Access Denied!**\n\nEnter the **Password** to unlock me.")
+        await message.reply_text("🔒 **Access Denied!**\nPassword bhejiye (Case Sensitive).")
 
 @bot.on_message(filters.text & filters.private)
 async def text_handler(client, message):
     user_id = message.from_user.id
     text = message.text
-
-    # --- PASSWORD CHECK ---
+    
+    # 1. Auth Check
     if user_id not in AUTH_USERS:
         if text.strip() == ACCESS_PASSWORD:
             AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Access Granted!**\n\nAb aap Files ya Links bhej sakte hain.")
+            await message.reply_text("🔓 **Access Granted!**\nSend your files now.")
         else:
-            await message.reply_text("❌ **Wrong Password!**\nTry again.")
+            await message.reply_text("❌ **Wrong Password.**")
         return
 
-    # --- LINK HANDLING ---
+    # 2. Link Handler
     if "t.me/" in text:
-        if not userbot: return await message.reply_text("⚠️ System Error: Userbot Missing.")
+        if not userbot: return await message.reply_text("⚠️ Userbot missing.")
         
-        async with queue_lock:
-            wait_msg = await message.reply_text("🔍 **Analyzing Link...**")
+        async with process_lock:
+            wait = await message.reply_text("🔎 **Checking...**")
             try:
                 link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
                 parts = link.split("/")
@@ -204,43 +176,36 @@ async def text_handler(client, message):
                 media = target.video or target.document or target.photo or target.audio
                 
                 if not media:
-                    await wait_msg.edit("⚠️ **No Media Found!**")
+                    await wait.edit("❌ No Media Found.")
                     return
 
-                await wait_msg.delete()
+                await wait.delete()
                 await process_media(media, message, original_msg=target)
-
             except Exception as e:
-                await wait_msg.edit("❌ **Link Error!**\nCheck if Userbot is joined in that channel.")
+                await wait.edit(f"❌ Error: {e}")
 
 @bot.on_message(filters.video | filters.document | filters.photo | filters.audio)
 async def file_handler(client, message):
-    user_id = message.from_user.id
+    if message.from_user.id not in AUTH_USERS:
+        return await message.reply_text("🔒 Password Required!")
     
-    # Auth Check
-    if user_id not in AUTH_USERS:
-        return await message.reply_text("🔒 **Locked!**\nEnter password first.")
-
-    # Queue Check
-    if queue_lock.locked():
-        msg = await message.reply_text("⏳ **Queue Full!**\nWait for the current upload to finish...")
-        
-    async with queue_lock:
-        if 'msg' in locals(): await msg.delete()
+    async with process_lock:
         media = message.video or message.document or message.photo or message.audio
         await process_media(media, message)
 
 # --- RUNNER ---
 async def main():
     threading.Thread(target=run_flask, daemon=True).start()
-    print("✅ System Started...")
+    print("✅ Bot Starting...")
     await bot.start()
     if userbot: 
+        print("✅ Userbot Starting...")
         try: await userbot.start()
-        except: pass
+        except Exception as e: print(f"Userbot Error: {e}")
+    
+    print("🚀 BOT IS READY TO USE")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    if not os.path.exists("downloads"): os.makedirs("downloads")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
