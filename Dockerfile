@@ -1,14 +1,19 @@
-# Python ka chhota version use karenge
-FROM python:3.9-slim
+FROM python:3.10-slim
 
-# Working directory set karenge
+# FFmpeg इन्स्टॉल करने के लिए (यह YouTube वीडियो के लिए बहुत ज़रूरी है)
+RUN apt-get update && \
+    apt-get install -y ffmpeg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# वर्किंग डायरेक्टरी सेट करें
 WORKDIR /app
 
-# Files copy karenge
-COPY . /app
+# सारे फाइल्स को सर्वर में कॉपी करें
+COPY . .
 
-# Libraries install karenge
+# requirements.txt से सारी लाइब्रेरी इन्स्टॉल करें
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bot start karenge
-CMD ["python", "main.py"]
+# बॉट चालू करने की कमांड
+CMD ["python", "bot.py"]
