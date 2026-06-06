@@ -1,213 +1,370 @@
 import os
-import uuid
-import logging
+import time
+import math
+import json
 import asyncio
-import threading
-from flask import Flask, redirect
+import requests
+import yt_dlp
+from datetime import datetime, timedelta
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from huggingface_hub import HfApi
-from dotenv import load_dotenv
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from threading import Thread
+from flask import Flask
 
-# --- SETUP ---
-load_dotenv()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - [BOT] - %(message)s"
-)
-logger = logging.getLogger("Bot")
-
-# --- FLASK SERVER ---
+# --- Flask Server (Render को जगाए रखने के लिए) ---
 app = Flask(__name__)
-SITE_URL = os.environ.get("RENDER_EXTERNAL_URL", "http://0.0.0.0:8080")
 
 @app.route('/')
-def home(): return "Bot is Alive"
+def home():
+    return "Catbox Bot is running on Render!"
 
-@app.route('/file/<path:filename>')
-def file_redirect(filename):
-    hf_repo = os.environ.get("HF_REPO")
-    return redirect(f"https://huggingface.co/datasets/{hf_repo}/resolve/main/{filename}?download=true", code=302)
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
-def run_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)), debug=False, use_reloader=False)
+# --- Telegram Bot की डिटेल्स ---
+BOT_TOKEN = "8728797060:AAH3L0eqApxEKuVvYjKT0JGpgQ3BPlrjbgI"  
+API_ID = 35985614         
+API_HASH = "6a0df17414daf6935f1f0a71b8af1ee9" 
 
-# --- CONFIG ---
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_REPO = os.getenv("HF_REPO")
-SESSION_STRING = os.getenv("SESSION_STRING")
+bot = Client("CatboxUploaderBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- CONSTANTS ---
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
-ACCESS_PASSWORD = "Maharaja Jaswant Singh"
-AUTH_USERS = set()
-USERBOT_ALIVE = False  # Flag to check if Userbot is running
+# --- ग्लोबल वेरिएबल्स ---
+ADMIN_ID = 7700628753
+GLOBAL_PASSWORD = "jitu@123"
+PASSWORD_LIMIT = 999999  # डिफ़ॉल्ट लिमिट (Unlimted)
+PASSWORD_USED_BY = {}    # जिन लोगों ने पासवर्ड इस्तेमाल किया है उनका डेटा
+user_data = {}
+admin_state = None  
 
-# --- CLIENTS ---
-# in_memory=True zaroori hai
-bot = Client("main_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
+# --- मैसेज डिलीट करने के लिए (टेम्परेरी) ---
+sent_message_map = {} 
+recent_admin_messages = [] 
 
-userbot = None
-if SESSION_STRING:
-    userbot = Client("user_bot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, in_memory=True)
+# --- लिमिट (200 MB) ---
+MAX_FILE_SIZE = 200 * 1024 * 1024  
 
-# --- QUEUE LOCK ---
-process_lock = asyncio.Lock()
+# --- Data Persistence ---
+DATA_FILE = "bot_config.json"
 
-# --- HELPER FUNCTIONS ---
-async def process_media(media, message, original_msg=None):
-    # 1. Size Check
-    file_size = getattr(media, "file_size", 0)
-    if file_size > MAX_FILE_SIZE:
-        await message.reply_text("❌ **File > 500MB!**\nServer protection enabled.")
-        return
-
-    # 2. Rename Logic (Strict)
-    unique_id = uuid.uuid4().hex[:6]
-    m_type = str(type(media))
-    
-    if "Video" in m_type: final_name = f"video_{unique_id}.mp4"
-    elif "Photo" in m_type: final_name = f"photo_{unique_id}.jpg"
-    elif "Audio" in m_type: final_name = f"music_{unique_id}.mp3"
-    else: final_name = f"pdf_{unique_id}.pdf"
-
-    status = await message.reply_text(f"⏳ **Processing...**\n`{final_name}`")
-    
-    if not os.path.exists("downloads"): os.makedirs("downloads")
-    local_path = f"downloads/{final_name}"
-
+def save_data():
     try:
-        # 3. Download
-        await status.edit("⬇️ **Downloading...**")
-        if original_msg:
-            # Userbot download logic
-            await original_msg.download(file_name=local_path)
+        auth_users = {str(uid): info['name'] for uid, info in user_data.items() if info.get('authenticated')}
+        with open(DATA_FILE, "w") as f:
+            json.dump({
+                "GLOBAL_PASSWORD": GLOBAL_PASSWORD,
+                "PASSWORD_LIMIT": PASSWORD_LIMIT,
+                "PASSWORD_USED_BY": {str(k): v for k, v in PASSWORD_USED_BY.items()},
+                "authenticated_users": auth_users
+            }, f)
+    except Exception as e: pass
+
+def load_data():
+    global GLOBAL_PASSWORD, PASSWORD_LIMIT, PASSWORD_USED_BY, user_data
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+                GLOBAL_PASSWORD = data.get("GLOBAL_PASSWORD", "jitu@123")
+                PASSWORD_LIMIT = data.get("PASSWORD_LIMIT", 999999)
+                PASSWORD_USED_BY = {int(k): v for k, v in data.get("PASSWORD_USED_BY", {}).items()}
+                
+                saved_users = data.get("authenticated_users", {})
+                for uid, name in saved_users.items():
+                    uid = int(uid)
+                    if uid not in user_data:
+                        user_data[uid] = {
+                            'name': name,
+                            'authenticated': True,
+                            'step': 'IDLE',
+                            'join_date': get_ist_time(),
+                            'last_online': get_ist_time(),
+                            'total_uploads': 0
+                        }
+        except Exception as e: pass
+
+def get_ist_time():
+    return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+def format_date(dt):
+    if isinstance(dt, str): return dt
+    return dt.strftime("%d-%b-%Y %I:%M %p")
+
+# --- Catbox Upload Function (401 Error Fixed) ---
+def upload_to_catbox(file_path):
+    url = "https://catbox.moe/user/api.php"
+    data = {"reqtype": "fileupload"}
+    # HTTP 401 एरर रोकने के लिए Headers जोड़ना ज़रूरी है
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    try:
+        with open(file_path, "rb") as f:
+            files = {"fileToUpload": f}
+            response = requests.post(url, data=data, files=files, headers=headers)
+        if response.status_code == 200:
+            return response.text.strip()
         else:
-            # Bot download logic
-            await message.download(file_name=local_path)
-
-        # 4. Upload
-        await status.edit("☁️ **Uploading...**")
-        api = HfApi(token=HF_TOKEN)
-        
-        await asyncio.to_thread(
-            api.upload_file,
-            path_or_fileobj=local_path,
-            path_in_repo=final_name,
-            repo_id=HF_REPO,
-            repo_type="dataset"
-        )
-
-        # 5. Reply
-        link = f"{SITE_URL}/file/{final_name}"
-        await status.delete()
-        
-        btn = InlineKeyboardButton("📂 Download Now", url=link)
-        await message.reply_text(
-            f"✅ **Uploaded!**\n\n🆔 `{final_name}`\n🔗 **Link:**\n`{link}`",
-            reply_markup=InlineKeyboardMarkup([[btn]]),
-            disable_web_page_preview=True
-        )
-
+            print(f"Catbox Error: HTTP {response.status_code}")
     except Exception as e:
-        logger.error(f"Process Error: {e}")
-        await status.edit("❌ **Failed.** Try again.")
-    
-    finally:
-        # 6. Cleanup
-        if os.path.exists(local_path): os.remove(local_path)
+        print(f"Catbox Upload Error: {e}")
+    return None
 
-# --- HANDLERS ---
+# --- YouTube Download Function (Max 200MB) ---
+def download_youtube_video(url):
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+        
+    ydl_opts = {
+        'format': 'best[ext=mp4][filesize<=200M]/best[filesize<=200M]',
+        'outtmpl': 'downloads/%(id)s.%(ext)s',
+        'noplaylist': True,
+        'quiet': True
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return ydl.prepare_filename(info)
+    except Exception as e:
+        print(f"yt-dlp error: {e}")
+        return None
+
+def init_user(user_id, message=None):
+    if user_id not in user_data:
+        name = message.from_user.first_name if message else "Unknown"
+        user_data[user_id] = {
+            'name': name,
+            'authenticated': False if user_id != ADMIN_ID else True, 
+            'step': 'PASSWORD' if user_id != ADMIN_ID else 'IDLE',
+            'join_date': get_ist_time(),
+            'last_online': get_ist_time(),
+            'total_uploads': 0
+        }
+    else:
+        user_data[user_id]['last_online'] = get_ist_time()
+        if message:
+            user_data[user_id]['name'] = message.from_user.first_name
+
+def admin_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Users List", callback_data="admin_users"), InlineKeyboardButton("🔑 Change Password", callback_data="admin_pass")],
+        [InlineKeyboardButton("📢 Broadcast / Send Msg", callback_data="admin_msg"), InlineKeyboardButton("🗑 Delete Last Broadcast", callback_data="admin_del")]
+    ])
+
+# --- Progress Bar ---
+async def progress_bar(current, total, msg, start_time, last_update):
+    now = time.time()
+    if total == 0: total = 1 
+    if now - last_update[0] > 3 or current == total:
+        last_update[0] = now
+        diff = now - start_time
+        percentage = current * 100 / total
+        speed = current / diff if diff > 0 else 0
+        eta = round((total - current) / speed) if speed > 0 else 0
+        
+        current_mb = round(current / (1024 * 1024), 2)
+        total_mb = round(total / (1024 * 1024), 2)
+        speed_mb = round(speed / (1024 * 1024), 2)
+        
+        progress_str = "[{0}{1}]".format(''.join(["█" for _ in range(math.floor(percentage / 5))]), ''.join(["░" for _ in range(20 - math.floor(percentage / 5))]))
+        eta_str = f"{eta} sec" if eta < 60 else f"{eta//60} min {eta%60} sec"
+        
+        text = f"📥 **Downloading...**\n\n{progress_str} **{round(percentage, 2)}%**\n📦 **Size:** `{current_mb} MB / {total_mb} MB`\n🚀 **Speed:** `{speed_mb} MB/s`\n⏳ **ETA:** `{eta_str}`"
+        try: await msg.edit_text(text)
+        except: pass
+
+@bot.on_message(filters.command("admin"))
+async def admin_cmd(client, message):
+    if message.chat.id == ADMIN_ID:
+        global admin_state
+        admin_state = None
+        await message.reply("👑 **Welcome to Admin Panel**\nChoose an option below:", reply_markup=admin_keyboard())
 
 @bot.on_message(filters.command("start"))
-async def start(client, message):
-    if message.from_user.id in AUTH_USERS:
-        await message.reply_text("👋 **Ready!**\nSend files or links.")
+async def start_cmd(client, message):
+    user_id = message.chat.id
+    init_user(user_id, message)
+    if user_data[user_id]['authenticated']:
+        user_data[user_id]['step'] = 'IDLE'
+        await message.reply("**✅ Logged in!**\n\n📥 **Send any Video, PDF, or YouTube/Insta Link (Max 200MB).**")
     else:
-        await message.reply_text("🔒 **Locked.** Password required.")
+        user_data[user_id]['step'] = 'PASSWORD'
+        await message.reply("👋 **Welcome!**\n🔐 **Enter Password to continue:**")
 
-@bot.on_message(filters.text & filters.private)
-async def text_handler(client, message):
-    user_id = message.from_user.id
-    text = message.text
-    
-    # Password Check
-    if user_id not in AUTH_USERS:
-        if text.strip() == ACCESS_PASSWORD:
-            AUTH_USERS.add(user_id)
-            await message.reply_text("🔓 **Unlocked!**")
+@bot.on_callback_query(filters.regex("^admin_"))
+async def admin_callbacks(client, callback_query: CallbackQuery):
+    if callback_query.message.chat.id != ADMIN_ID:
+        return
+    data = callback_query.data
+    global admin_state, recent_admin_messages
+
+    if data == "admin_users":
+        total_users = len(user_data)
+        text = f"👥 **Total Users:** `{total_users}`\n\n"
+        for uid, info in user_data.items():
+            if uid == ADMIN_ID: continue
+            text += f"👤 **Name:** {info['name']}\n🆔 **ID:** `{uid}`\n📅 **Joined:** {format_date(info['join_date'])}\n🕒 **Last Online:** {format_date(info['last_online'])}\n📤 **Total Uploads:** {info['total_uploads']}\n"
+            text += "➖➖➖➖➖➖➖➖\n"
+        if len(text) > 4000:
+            for x in range(0, len(text), 4000):
+                await client.send_message(ADMIN_ID, text[x:x+4000])
         else:
-            await message.reply_text("❌ **Wrong Password.**")
+            await callback_query.message.reply(text)
+
+    elif data == "admin_pass":
+        admin_state = "AWAIT_NEW_PASSWORD"
+        await callback_query.message.reply("🔑 **Please send the NEW PASSWORD and LIMIT.**\n`उदाहरण: 5550 5` (इसका मतलब सिर्फ 5 लोग पासवर्ड यूज़ कर पाएंगे)")
+
+    elif data == "admin_msg":
+        admin_state = "AWAIT_BROADCAST"
+        await callback_query.message.reply("📢 **Broadcast / Personal Message Mode!**\n\n👉 **सबको भेजने के लिए:** कोई भी Text/Photo भेजें।\n👉 **किसी एक को भेजने के लिए:** ID स्पेस मेसेज लिखें।")
+    
+    elif data == "admin_del":
+        if not recent_admin_messages:
+            return await callback_query.message.reply("❌ **No recent messages/broadcasts found to delete.**")
+        
+        targets = recent_admin_messages.pop()
+        deleted_ops = 0
+        for uid, mid in targets:
+            try:
+                await client.delete_messages(uid, mid)
+                deleted_ops += 1
+            except: pass
+        await callback_query.message.reply(f"✅ **Deleted last broadcast from {deleted_ops} users' chats!**")
+
+@bot.on_message(~filters.command(["start", "admin"]))
+async def handle_all_messages(client, message):
+    user_id = message.chat.id
+    init_user(user_id, message)
+    step = user_data[user_id].get('step')
+
+    # === Admin Reply to Delete ===
+    if message.text == "/delete" and message.reply_to_message and user_id == ADMIN_ID:
+        summary_id = message.reply_to_message.id
+        if summary_id in sent_message_map:
+            targets = sent_message_map[summary_id]
+            for uid, mid in targets:
+                try: await client.delete_messages(uid, mid)
+                except: pass
+            await message.reply("✅ **Message successfully deleted!**")
+            del sent_message_map[summary_id] 
         return
 
-    # Link Check
-    if "t.me/" in text:
-        # SAFETY CHECK ADDED HERE
-        global USERBOT_ALIVE
-        if not userbot or not USERBOT_ALIVE:
-            return await message.reply_text("❌ **Userbot Error:** Session String expire ho gayi hai ya start nahi hui. Nayi string lagao.")
+    # === Admin State Handling ===
+    if user_id == ADMIN_ID:
+        global admin_state, GLOBAL_PASSWORD, recent_admin_messages, PASSWORD_LIMIT, PASSWORD_USED_BY
+        
+        if admin_state == "AWAIT_NEW_PASSWORD" and message.text:
+            parts = message.text.strip().split()
+            GLOBAL_PASSWORD = parts[0]
+            PASSWORD_LIMIT = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 999999
+            PASSWORD_USED_BY = {} 
+            admin_state = None
+            save_data()
+            await message.reply(f"✅ **Password Changed to:** `{GLOBAL_PASSWORD}`\n👥 **Max Users:** `{PASSWORD_LIMIT}`")
+            return
 
-        async with process_lock:
-            wait = await message.reply_text("🔎 **Searching...**")
-            try:
-                link = text.replace("https://", "").replace("http://", "").replace("t.me/", "").replace("telegram.me/", "")
-                parts = link.split("/")
+        elif admin_state == "AWAIT_BROADCAST":
+            text_to_check = message.text or message.caption
+            is_personal = False; target_id = None; content = None
+            
+            if text_to_check:
+                parts = text_to_check.split(" ", 1)
+                if len(parts) > 1 and parts[0].isdigit() and len(parts[0]) > 5:
+                    is_personal = True; target_id = int(parts[0]); content = parts[1]
+                    
+            targets = []
+            if is_personal:
+                try:
+                    msg = await client.send_message(target_id, content) if message.text else await message.copy(target_id, caption=content)
+                    targets.append((target_id, msg.id))
+                    summary = await message.reply(f"✅ **Message sent to `{target_id}`!**\n_Reply with /delete to remove._")
+                except: return await message.reply("❌ **Failed to send.**")
+            else:
+                for uid in user_data:
+                    if uid != ADMIN_ID:
+                        try:
+                            msg = await message.copy(uid)
+                            targets.append((uid, msg.id))
+                        except: pass
+                summary = await message.reply(f"✅ **Broadcast Sent!**\n_Reply with /delete to remove._")
+            
+            if targets:
+                sent_message_map[summary.id] = targets
+                recent_admin_messages.append(targets)
+            admin_state = None
+            return
+
+    # === Normal User Handling ===
+    if not user_data[user_id]['authenticated'] and step != 'PASSWORD':
+        user_data[user_id]['step'] = 'PASSWORD'
+        return await message.reply("🔐 **Session Expired! Please enter password:**")
+
+    if step == 'PASSWORD':
+        if message.text == GLOBAL_PASSWORD:
+            if user_id not in PASSWORD_USED_BY:
+                if len(PASSWORD_USED_BY) >= PASSWORD_LIMIT:
+                    return await message.reply("🚫 **Password Limit Reached!**")
+                PASSWORD_USED_BY[user_id] = user_data[user_id]['name']
                 
-                if parts[0] == "c":
-                    chat_id = int("-100" + parts[1])
-                    msg_id = int(parts[-1].split("?")[0])
-                else:
-                    chat_id = parts[0]
-                    msg_id = int(parts[-1].split("?")[0])
+            user_data[user_id]['authenticated'] = True
+            user_data[user_id]['step'] = 'IDLE'
+            save_data()
+            await message.reply("**✅ Password Correct!**\n\n📥 **अब आप कोई भी Video, PDF या YouTube/Insta Link भेज सकते हैं (Max 200MB).**")
+        else:
+            await message.reply("❌ **Wrong Password! Try again.**")
 
-                target = await userbot.get_messages(chat_id, msg_id)
-                media = target.video or target.document or target.photo or target.audio
+    elif step == 'IDLE':
+        # 1. Handle YouTube / Web Links
+        if message.text and ("http://" in message.text or "https://" in message.text):
+            url = message.text.strip()
+            msg = await message.reply("⏳ **Fetching Video Details... (Checking Size)**")
+            
+            # YouTube download start
+            file_path = await asyncio.to_thread(download_youtube_video, url)
+            
+            if not file_path:
+                return await msg.edit_text("❌ **Download Failed!**\nया तो लिंक गलत है, या वीडियो की साइज **200MB से ज्यादा** है।")
                 
-                if not media:
-                    await wait.edit("❌ No Media Found.")
-                    return
+            await msg.edit_text("📤 **Video Downloaded! Uploading to Catbox...**")
+            
+            # Upload to Catbox
+            catbox_link = await asyncio.to_thread(upload_to_catbox, file_path)
+            
+            # Delete local file after upload
+            if os.path.exists(file_path): os.remove(file_path)
+                
+            if catbox_link and catbox_link.startswith("http"):
+                user_data[user_id]['total_uploads'] += 1
+                await msg.edit_text(f"✅ **Upload Successful!**\n\n🔗 **Direct Link:**\n`{catbox_link}`")
+            else:
+                await msg.edit_text("❌ **Failed to upload to Catbox server.**")
 
-                await wait.delete()
-                await process_media(media, message, original_msg=target)
-            except Exception as e:
-                await wait.edit(f"❌ Error: {e}")
-
-@bot.on_message(filters.video | filters.document | filters.photo | filters.audio)
-async def file_handler(client, message):
-    if message.from_user.id not in AUTH_USERS:
-        return await message.reply_text("🔒 Locked!")
-    
-    async with process_lock:
-        media = message.video or message.document or message.photo or message.audio
-        await process_media(media, message)
-
-# --- RUNNER ---
-async def main():
-    threading.Thread(target=run_flask, daemon=True).start()
-    
-    print("--------------------------------")
-    print("✅ Main Bot Starting...")
-    await bot.start()
-    
-    global USERBOT_ALIVE
-    if userbot:
-        print("⏳ Userbot Connecting...")
-        try:
-            await userbot.start()
-            USERBOT_ALIVE = True
-            me = await userbot.get_me()
-            print(f"✅ Userbot Connected: {me.first_name}")
-        except Exception as e:
-            USERBOT_ALIVE = False
-            print(f"❌ USERBOT FAILED: {e}")
-            print("⚠️ Tip: Generate NEW Session String.")
-    
-    print("🚀 BOT READY")
-    await asyncio.Event().wait()
+        # 2. Handle Videos and Documents uploaded to Telegram directly
+        elif message.video or message.document:
+            file_size = message.video.file_size if message.video else message.document.file_size
+            
+            if file_size > MAX_FILE_SIZE:
+                return await message.reply("❌ **File Size Limit Exceeded!**\nकृपया 200MB से छोटी फाइल भेजें।")
+                
+            msg = await message.reply("⏳ **Downloading File...**")
+            start_time = time.time()
+            last_update = [start_time]
+            
+            file_path = await message.download(progress=progress_bar, progress_args=(msg, start_time, last_update))
+            
+            await msg.edit_text("📤 **Uploading to Catbox...**")
+            catbox_link = await asyncio.to_thread(upload_to_catbox, file_path)
+            
+            if os.path.exists(file_path): os.remove(file_path)
+                
+            if catbox_link and catbox_link.startswith("http"):
+                user_data[user_id]['total_uploads'] += 1
+                await msg.edit_text(f"✅ **Upload Successful!**\n\n🔗 **Direct Link:**\n`{catbox_link}`")
+            else:
+                await msg.edit_text("❌ **Failed to upload to Catbox server.**")
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    # Render पर बॉट को चालू रखने के लिए Flask सर्वर स्टार्ट करना ज़रूरी है
+    Thread(target=run_server).start()
+    load_data() 
+    print("Bot is Starting...")
+    bot.run()
