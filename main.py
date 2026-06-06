@@ -23,7 +23,7 @@ def run_server():
     app.run(host="0.0.0.0", port=port)
 
 # --- Telegram Bot की डिटेल्स ---
-BOT_TOKEN = "8728797060:AAH3L0eqApxEKuVvYjKT0JGpgQ3BPlrjbgI"  
+BOT_TOKEN = "8881859433:AAEsGoEO7xrkVSw3i2FqTM2YM20n3N85tKE"  
 API_ID = 35985614         
 API_HASH = "6a0df17414daf6935f1f0a71b8af1ee9" 
 
