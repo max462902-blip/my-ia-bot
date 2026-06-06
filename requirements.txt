@@ -1,6 +1,5 @@
-flask
 pyrogram
 tgcrypto
-huggingface_hub
-python-dotenv
 yt-dlp
+requests
+flask
