@@ -16,4 +16,4 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # बॉट चालू करने की कमांड
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
